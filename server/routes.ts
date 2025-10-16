@@ -438,7 +438,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Form 1040 PDF Export route
   app.get("/api/form1040/export", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const PDFDocument = require("pdfkit");
+      const PDFKit = await import("pdfkit");
+      const PDFDocument = PDFKit.default;
       
       const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
       if (taxReturns.length === 0) {
@@ -536,6 +537,158 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("PDF export error:", error);
       res.status(500).json({ message: error.message || "PDF export failed" });
+    }
+  });
+
+  // Form 8949 routes
+  app.get("/api/form8949", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      if (taxReturns.length === 0) return res.json([]);
+      
+      const form8949Data = await storage.get8949ByTaxReturnId(taxReturns[0].id);
+      res.json(form8949Data);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Schedule D route
+  app.get("/api/schedule-d", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      if (taxReturns.length === 0) return res.json(null);
+      
+      const scheduleD = await storage.getScheduleDByTaxReturnId(taxReturns[0].id);
+      res.json(scheduleD || null);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Calculate and generate Schedule D
+  app.post("/api/schedule-d/calculate", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+
+      const taxReturn = taxReturns[0];
+
+      // Get all 1099-B data
+      const form1099BData = await storage.get1099BByTaxReturnId(taxReturn.id);
+
+      if (form1099BData.length === 0) {
+        return res.status(400).json({ message: "No capital gain/loss transactions found" });
+      }
+
+      // Delete existing Form 8949 entries to avoid duplicates
+      await storage.delete8949ByTaxReturnId(taxReturn.id);
+
+      // Generate Form 8949 entries from 1099-B data
+      const form8949Entries = [];
+      for (const b1099 of form1099BData) {
+        // Determine if short-term or long-term based on dates
+        let isShortTerm = false;
+        if (b1099.dateAcquired && b1099.dateSold) {
+          const acquired = new Date(b1099.dateAcquired);
+          const sold = new Date(b1099.dateSold);
+          const diffTime = sold.getTime() - acquired.getTime();
+          const diffDays = diffTime / (1000 * 60 * 60 * 24);
+          isShortTerm = diffDays <= 365;
+        } else if (b1099.shortTermGainLoss && parseFloat(b1099.shortTermGainLoss) !== 0) {
+          isShortTerm = true;
+        } else if (b1099.longTermGainLoss && parseFloat(b1099.longTermGainLoss) !== 0) {
+          isShortTerm = false;
+        }
+
+        const proceeds = parseFloat(b1099.proceeds || "0");
+        const costBasis = parseFloat(b1099.costBasis || "0");
+        const gainOrLoss = proceeds - costBasis;
+
+        const entry = await storage.create8949({
+          taxReturnId: taxReturn.id,
+          form1099BId: b1099.id,
+          description: b1099.description || "Securities",
+          dateAcquired: b1099.dateAcquired,
+          dateSold: b1099.dateSold || new Date().toISOString().split('T')[0],
+          proceeds: proceeds.toString(),
+          costBasis: costBasis.toString(),
+          adjustmentCode: null,
+          adjustmentAmount: "0",
+          gainOrLoss: gainOrLoss.toString(),
+          isShortTerm,
+          washSale: b1099.washSale || false,
+        });
+
+        form8949Entries.push(entry);
+      }
+
+      // Calculate Schedule D totals
+      const shortTermTransactions = form8949Entries.filter(e => e.isShortTerm);
+      const longTermTransactions = form8949Entries.filter(e => !e.isShortTerm);
+
+      const shortTermTotalProceeds = shortTermTransactions.reduce(
+        (sum, t) => sum + parseFloat(t.proceeds || "0"), 0
+      );
+      const shortTermTotalCostBasis = shortTermTransactions.reduce(
+        (sum, t) => sum + parseFloat(t.costBasis || "0"), 0
+      );
+      const shortTermTotalGainLoss = shortTermTransactions.reduce(
+        (sum, t) => sum + parseFloat(t.gainOrLoss || "0"), 0
+      );
+
+      const longTermTotalProceeds = longTermTransactions.reduce(
+        (sum, t) => sum + parseFloat(t.proceeds || "0"), 0
+      );
+      const longTermTotalCostBasis = longTermTransactions.reduce(
+        (sum, t) => sum + parseFloat(t.costBasis || "0"), 0
+      );
+      const longTermTotalGainLoss = longTermTransactions.reduce(
+        (sum, t) => sum + parseFloat(t.gainOrLoss || "0"), 0
+      );
+
+      const totalCapitalGainLoss = shortTermTotalGainLoss + longTermTotalGainLoss;
+
+      // Create or update Schedule D
+      const existingScheduleD = await storage.getScheduleDByTaxReturnId(taxReturn.id);
+
+      const scheduleDData = {
+        taxReturnId: taxReturn.id,
+        shortTermTotalProceeds: shortTermTotalProceeds.toString(),
+        shortTermTotalCostBasis: shortTermTotalCostBasis.toString(),
+        shortTermTotalGainLoss: shortTermTotalGainLoss.toString(),
+        longTermTotalProceeds: longTermTotalProceeds.toString(),
+        longTermTotalCostBasis: longTermTotalCostBasis.toString(),
+        longTermTotalGainLoss: longTermTotalGainLoss.toString(),
+        netShortTermGainLoss: shortTermTotalGainLoss.toString(),
+        netLongTermGainLoss: longTermTotalGainLoss.toString(),
+        totalCapitalGainLoss: totalCapitalGainLoss.toString(),
+      };
+
+      if (existingScheduleD) {
+        await storage.updateScheduleD(existingScheduleD.id, scheduleDData);
+      } else {
+        await storage.createScheduleD(scheduleDData);
+      }
+
+      // Update Form 1040 with capital gains
+      const form1040 = await storage.getForm1040ByTaxReturnId(taxReturn.id);
+      if (form1040) {
+        await storage.updateForm1040(form1040.id, {
+          capitalGains: totalCapitalGainLoss.toString(),
+        });
+      }
+
+      res.json({ 
+        message: "Schedule D calculated successfully",
+        form8949Count: form8949Entries.length,
+        totalCapitalGainLoss 
+      });
+    } catch (error: any) {
+      console.error("Schedule D calculation error:", error);
+      res.status(500).json({ message: error.message || "Schedule D calculation failed" });
     }
   });
 

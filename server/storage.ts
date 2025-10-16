@@ -15,6 +15,10 @@ import {
   type Insert1099B,
   type Form1040,
   type Insert1040,
+  type Form8949,
+  type Insert8949,
+  type ScheduleD,
+  type InsertScheduleD,
   users,
   taxReturns,
   documents,
@@ -23,6 +27,8 @@ import {
   form1099Int,
   form1099B,
   form1040,
+  form8949,
+  scheduleD,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { neon } from "@neondatabase/serverless";
@@ -68,6 +74,16 @@ export interface IStorage {
   getForm1040ByTaxReturnId(taxReturnId: string): Promise<Form1040 | undefined>;
   createForm1040(data: Insert1040): Promise<Form1040>;
   updateForm1040(id: string, data: Partial<Form1040>): Promise<Form1040>;
+
+  // Form 8949 methods
+  get8949ByTaxReturnId(taxReturnId: string): Promise<Form8949[]>;
+  create8949(data: Insert8949): Promise<Form8949>;
+  delete8949ByTaxReturnId(taxReturnId: string): Promise<void>;
+
+  // Schedule D methods
+  getScheduleDByTaxReturnId(taxReturnId: string): Promise<ScheduleD | undefined>;
+  createScheduleD(data: InsertScheduleD): Promise<ScheduleD>;
+  updateScheduleD(id: string, data: Partial<ScheduleD>): Promise<ScheduleD>;
 }
 
 export class MemStorage implements IStorage {
@@ -79,6 +95,8 @@ export class MemStorage implements IStorage {
   private form1099Int: Map<string, Form1099Int>;
   private form1099B: Map<string, Form1099B>;
   private form1040: Map<string, Form1040>;
+  private form8949: Map<string, Form8949>;
+  private scheduleD: Map<string, ScheduleD>;
 
   constructor() {
     this.users = new Map();
@@ -89,6 +107,8 @@ export class MemStorage implements IStorage {
     this.form1099Int = new Map();
     this.form1099B = new Map();
     this.form1040 = new Map();
+    this.form8949 = new Map();
+    this.scheduleD = new Map();
   }
 
   // User methods
@@ -262,6 +282,51 @@ export class MemStorage implements IStorage {
     this.form1040.set(id, updated);
     return updated;
   }
+
+  // Form 8949 methods
+  async get8949ByTaxReturnId(taxReturnId: string): Promise<Form8949[]> {
+    return Array.from(this.form8949.values()).filter(
+      (form) => form.taxReturnId === taxReturnId
+    );
+  }
+
+  async create8949(insert8949: Insert8949): Promise<Form8949> {
+    const id = randomUUID();
+    const form: Form8949 = { ...insert8949, id };
+    this.form8949.set(id, form);
+    return form;
+  }
+
+  async delete8949ByTaxReturnId(taxReturnId: string): Promise<void> {
+    const toDelete = Array.from(this.form8949.entries())
+      .filter(([_, form]) => form.taxReturnId === taxReturnId)
+      .map(([id]) => id);
+    
+    toDelete.forEach(id => this.form8949.delete(id));
+  }
+
+  // Schedule D methods
+  async getScheduleDByTaxReturnId(taxReturnId: string): Promise<ScheduleD | undefined> {
+    return Array.from(this.scheduleD.values()).find(
+      (schedule) => schedule.taxReturnId === taxReturnId
+    );
+  }
+
+  async createScheduleD(insertScheduleD: InsertScheduleD): Promise<ScheduleD> {
+    const id = randomUUID();
+    const schedule: ScheduleD = { ...insertScheduleD, id };
+    this.scheduleD.set(id, schedule);
+    return schedule;
+  }
+
+  async updateScheduleD(id: string, data: Partial<ScheduleD>): Promise<ScheduleD> {
+    const existing = this.scheduleD.get(id);
+    if (!existing) throw new Error("Schedule D not found");
+    
+    const updated = { ...existing, ...data };
+    this.scheduleD.set(id, updated);
+    return updated;
+  }
 }
 
 export class DbStorage implements IStorage {
@@ -406,6 +471,42 @@ export class DbStorage implements IStorage {
       .returning();
     
     if (!result[0]) throw new Error("Form 1040 not found");
+    return result[0];
+  }
+
+  // Form 8949 methods
+  async get8949ByTaxReturnId(taxReturnId: string): Promise<Form8949[]> {
+    return await this.db.select().from(form8949).where(eq(form8949.taxReturnId, taxReturnId));
+  }
+
+  async create8949(insert8949: Insert8949): Promise<Form8949> {
+    const result = await this.db.insert(form8949).values(insert8949).returning();
+    return result[0];
+  }
+
+  async delete8949ByTaxReturnId(taxReturnId: string): Promise<void> {
+    await this.db.delete(form8949).where(eq(form8949.taxReturnId, taxReturnId));
+  }
+
+  // Schedule D methods
+  async getScheduleDByTaxReturnId(taxReturnId: string): Promise<ScheduleD | undefined> {
+    const result = await this.db.select().from(scheduleD).where(eq(scheduleD.taxReturnId, taxReturnId)).limit(1);
+    return result[0];
+  }
+
+  async createScheduleD(insertScheduleD: InsertScheduleD): Promise<ScheduleD> {
+    const result = await this.db.insert(scheduleD).values(insertScheduleD).returning();
+    return result[0];
+  }
+
+  async updateScheduleD(id: string, data: Partial<ScheduleD>): Promise<ScheduleD> {
+    const result = await this.db
+      .update(scheduleD)
+      .set(data)
+      .where(eq(scheduleD.id, id))
+      .returning();
+    
+    if (!result[0]) throw new Error("Schedule D not found");
     return result[0];
   }
 }

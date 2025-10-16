@@ -14,6 +14,7 @@ import Upload from "@/pages/upload";
 import Review from "@/pages/review";
 import Calculate from "@/pages/calculate";
 import Form1040Page from "@/pages/form1040";
+import ScheduleDPage from "@/pages/schedule-d";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const token = localStorage.getItem("token");
@@ -41,6 +42,9 @@ function Router() {
       </Route>
       <Route path="/form1040">
         {() => <ProtectedRoute component={Form1040Page} />}
+      </Route>
+      <Route path="/schedule-d">
+        {() => <ProtectedRoute component={ScheduleDPage} />}
       </Route>
       <Route path="/">
         <Redirect to="/login" />
