@@ -1,4 +1,4 @@
-import { Home, Upload, FileText, Calculator, ClipboardCheck } from "lucide-react";
+import { Home, Upload, FileText, Calculator, ClipboardCheck, TrendingUp } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -41,6 +41,12 @@ const menuItems = [
     url: "/form1040",
     icon: ClipboardCheck,
     testId: "link-form1040",
+  },
+  {
+    title: "Schedule D",
+    url: "/schedule-d",
+    icon: TrendingUp,
+    testId: "link-schedule-d",
   },
 ];
 

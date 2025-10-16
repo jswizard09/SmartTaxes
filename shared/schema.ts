@@ -117,6 +117,36 @@ export const form1040 = pgTable("form_1040", {
   refundOrOwed: decimal("refund_or_owed", { precision: 12, scale: 2 }),
 });
 
+export const form8949 = pgTable("form_8949", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxReturnId: varchar("tax_return_id").notNull().references(() => taxReturns.id),
+  form1099BId: varchar("form_1099_b_id").references(() => form1099B.id),
+  description: text("description").notNull(),
+  dateAcquired: text("date_acquired"),
+  dateSold: text("date_sold").notNull(),
+  proceeds: decimal("proceeds", { precision: 12, scale: 2 }).notNull(),
+  costBasis: decimal("cost_basis", { precision: 12, scale: 2 }).notNull(),
+  adjustmentCode: text("adjustment_code"),
+  adjustmentAmount: decimal("adjustment_amount", { precision: 12, scale: 2 }).default("0"),
+  gainOrLoss: decimal("gain_or_loss", { precision: 12, scale: 2 }).notNull(),
+  isShortTerm: boolean("is_short_term").notNull(),
+  washSale: boolean("wash_sale").default(false),
+});
+
+export const scheduleD = pgTable("schedule_d", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxReturnId: varchar("tax_return_id").notNull().references(() => taxReturns.id),
+  shortTermTotalProceeds: decimal("short_term_total_proceeds", { precision: 12, scale: 2 }).default("0"),
+  shortTermTotalCostBasis: decimal("short_term_total_cost_basis", { precision: 12, scale: 2 }).default("0"),
+  shortTermTotalGainLoss: decimal("short_term_total_gain_loss", { precision: 12, scale: 2 }).default("0"),
+  longTermTotalProceeds: decimal("long_term_total_proceeds", { precision: 12, scale: 2 }).default("0"),
+  longTermTotalCostBasis: decimal("long_term_total_cost_basis", { precision: 12, scale: 2 }).default("0"),
+  longTermTotalGainLoss: decimal("long_term_total_gain_loss", { precision: 12, scale: 2 }).default("0"),
+  netShortTermGainLoss: decimal("net_short_term_gain_loss", { precision: 12, scale: 2 }).default("0"),
+  netLongTermGainLoss: decimal("net_long_term_gain_loss", { precision: 12, scale: 2 }).default("0"),
+  totalCapitalGainLoss: decimal("total_capital_gain_loss", { precision: 12, scale: 2 }).default("0"),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -157,6 +187,14 @@ export const insert1040Schema = createInsertSchema(form1040).omit({
   id: true,
 });
 
+export const insert8949Schema = createInsertSchema(form8949).omit({
+  id: true,
+});
+
+export const insertScheduleDSchema = createInsertSchema(scheduleD).omit({
+  id: true,
+});
+
 // Select types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -181,6 +219,12 @@ export type Form1099B = typeof form1099B.$inferSelect;
 
 export type Insert1040 = z.infer<typeof insert1040Schema>;
 export type Form1040 = typeof form1040.$inferSelect;
+
+export type Insert8949 = z.infer<typeof insert8949Schema>;
+export type Form8949 = typeof form8949.$inferSelect;
+
+export type InsertScheduleD = z.infer<typeof insertScheduleDSchema>;
+export type ScheduleD = typeof scheduleD.$inferSelect;
 
 // Login schema
 export const loginSchema = z.object({

@@ -155,6 +155,38 @@ TaxFile Pro is a modern, professional tax filing web application that simplifies
   - Form 1040 generation and display
 - Architect approved as production-ready for MVP launch
 
+### Phase 4: Advanced Features (In Progress)
+
+#### PostgreSQL Database Migration (Complete)
+- Migrated from MemStorage to PostgreSQL via Neon
+- Implemented DbStorage class with Drizzle ORM
+- All CRUD operations working with persistent database
+- Data persists across sessions
+
+#### OCR for Scanned Documents (Complete)
+- Integrated Tesseract.js for OCR text extraction
+- Support for JPG, PNG image uploads
+- Automatic text extraction from scanned documents
+- Seamless integration with existing parsing pipeline
+
+#### PDF Export for Form 1040 (Complete)
+- Installed PDFKit library for PDF generation
+- Created GET /api/form1040/export endpoint
+- Fixed ESM/CommonJS compatibility with dynamic import
+- Download button on Form 1040 page with blob handling
+- End-to-end testing confirmed successful PDF downloads
+
+#### Schedule D and Form 8949 (In Progress)
+- Extended schema with form8949 and scheduleD tables
+- Implemented capital gains categorization (short-term vs long-term)
+- Created POST /api/schedule-d/calculate endpoint:
+  - Generates Form 8949 entries from 1099-B data
+  - Calculates holding period (<=365 days = short-term)
+  - Computes Schedule D totals and net capital gains/losses
+  - Updates Form 1040 with capital gains
+- Added GET /api/form8949 and GET /api/schedule-d endpoints
+- Storage interface updated with Form 8949 and Schedule D methods
+
 ## Development Guidelines
 
 ### Frontend Standards
