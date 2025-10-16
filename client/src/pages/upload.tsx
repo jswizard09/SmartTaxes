@@ -59,7 +59,8 @@ export default function Upload() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      return await apiRequest("DELETE", `/api/documents/${id}`, undefined);
+      const response = await apiRequest("DELETE", `/api/documents/${id}`, undefined);
+      return response.json();
     },
     onSuccess: () => {
       toast({

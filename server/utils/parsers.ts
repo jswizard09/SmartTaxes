@@ -1,6 +1,5 @@
-import pdfParse from "pdf-parse";
 import * as XLSX from "xlsx";
-import { createReadStream } from "fs";
+import { createReadStream, readFileSync } from "fs";
 import csvParser from "csv-parser";
 
 export interface ParsedW2 {
@@ -45,8 +44,8 @@ export interface Parsed1099B {
 }
 
 export async function parsePDF(filePath: string): Promise<string> {
-  const fs = require("fs");
-  const dataBuffer = fs.readFileSync(filePath);
+  const pdfParse = (await import("pdf-parse")).default;
+  const dataBuffer = readFileSync(filePath);
   const data = await pdfParse(dataBuffer);
   return data.text;
 }

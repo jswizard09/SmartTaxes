@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { loginSchema, type LoginInput } from "@shared/schema";
+import { loginSchema, insertUserSchema, type LoginInput, type InsertUser } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,18 +17,18 @@ export default function Login() {
   const { toast } = useToast();
   const [isRegister, setIsRegister] = useState(false);
 
-  const form = useForm<LoginInput>({
-    resolver: zodResolver(loginSchema),
+  const form = useForm<LoginInput & { email?: string }>({
     defaultValues: {
       username: "",
       password: "",
+      email: "",
     },
   });
 
   const loginMutation = useMutation({
     mutationFn: async (data: LoginInput) => {
       const response = await apiRequest("POST", "/api/auth/login", data);
-      return response;
+      return response.json();
     },
     onSuccess: (data) => {
       localStorage.setItem("token", data.token);
@@ -51,7 +51,7 @@ export default function Login() {
   const registerMutation = useMutation({
     mutationFn: async (data: any) => {
       const response = await apiRequest("POST", "/api/auth/register", data);
-      return response;
+      return response.json();
     },
     onSuccess: () => {
       toast({
@@ -70,10 +70,30 @@ export default function Login() {
     },
   });
 
-  const onSubmit = (data: LoginInput) => {
+  const onSubmit = (data: LoginInput & { email?: string }) => {
     if (isRegister) {
+      // Validate with insertUserSchema
+      const validation = insertUserSchema.safeParse(data);
+      if (!validation.success) {
+        toast({
+          title: "Validation error",
+          description: "Please fill in all required fields",
+          variant: "destructive",
+        });
+        return;
+      }
       registerMutation.mutate(data);
     } else {
+      // Validate with loginSchema
+      const validation = loginSchema.safeParse(data);
+      if (!validation.success) {
+        toast({
+          title: "Validation error",
+          description: "Please fill in all required fields",
+          variant: "destructive",
+        });
+        return;
+      }
       loginMutation.mutate(data);
     }
   };
@@ -173,6 +193,27 @@ export default function Login() {
                     </FormItem>
                   )}
                 />
+
+                {isRegister && (
+                  <FormField
+                    control={form.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            type="email"
+                            placeholder="Enter your email"
+                            data-testid="input-email"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
 
                 <FormField
                   control={form.control}

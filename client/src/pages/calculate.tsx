@@ -21,7 +21,8 @@ export default function Calculate() {
 
   const calculateMutation = useMutation({
     mutationFn: async (status: string) => {
-      return await apiRequest("POST", "/api/calculate", { filingStatus: status });
+      const response = await apiRequest("POST", "/api/calculate", { filingStatus: status });
+      return response.json();
     },
     onSuccess: () => {
       toast({
