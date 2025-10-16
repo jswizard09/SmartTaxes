@@ -103,6 +103,9 @@ export default function Upload() {
         "application/pdf",
         "text/csv",
         "application/vnd.ms-excel",
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       ];
       return validTypes.includes(file.type);
@@ -111,7 +114,7 @@ export default function Upload() {
     if (validFiles.length < files.length) {
       toast({
         title: "Invalid file type",
-        description: "Only PDF, CSV, and Excel files are supported.",
+        description: "Only PDF, CSV, Excel, and image files (JPG, PNG) are supported.",
         variant: "destructive",
       });
     }
@@ -158,7 +161,7 @@ export default function Upload() {
         <CardHeader>
           <CardTitle>Upload Files</CardTitle>
           <CardDescription>
-            Supported formats: PDF, CSV, Excel (.xlsx, .xls)
+            Supported formats: PDF, CSV, Excel (.xlsx, .xls), Images (JPG, PNG)
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -184,7 +187,7 @@ export default function Upload() {
             <input
               type="file"
               multiple
-              accept=".pdf,.csv,.xls,.xlsx"
+              accept=".pdf,.csv,.xls,.xlsx,.jpg,.jpeg,.png"
               onChange={handleFileInput}
               className="hidden"
               id="file-upload"

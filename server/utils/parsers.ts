@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import { createReadStream, readFileSync } from "fs";
 import csvParser from "csv-parser";
+import { createWorker } from "tesseract.js";
 
 export interface ParsedW2 {
   employerName?: string;
@@ -48,6 +49,16 @@ export async function parsePDF(filePath: string): Promise<string> {
   const dataBuffer = readFileSync(filePath);
   const data = await pdfParse(dataBuffer);
   return data.text;
+}
+
+export async function parseImageWithOCR(filePath: string): Promise<string> {
+  const worker = await createWorker("eng");
+  try {
+    const { data: { text } } = await worker.recognize(filePath);
+    return text;
+  } finally {
+    await worker.terminate();
+  }
 }
 
 export async function parseCSV(filePath: string): Promise<any[]> {
