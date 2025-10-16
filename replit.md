@@ -176,7 +176,7 @@ TaxFile Pro is a modern, professional tax filing web application that simplifies
 - Download button on Form 1040 page with blob handling
 - End-to-end testing confirmed successful PDF downloads
 
-#### Schedule D and Form 8949 (In Progress)
+#### Schedule D and Form 8949 (Complete)
 - Extended schema with form8949 and scheduleD tables
 - Implemented capital gains categorization (short-term vs long-term)
 - Created POST /api/schedule-d/calculate endpoint:
@@ -184,8 +184,12 @@ TaxFile Pro is a modern, professional tax filing web application that simplifies
   - Calculates holding period (<=365 days = short-term)
   - Computes Schedule D totals and net capital gains/losses
   - Updates Form 1040 with capital gains
+  - Implements delete-before-create pattern to prevent duplicates
 - Added GET /api/form8949 and GET /api/schedule-d endpoints
-- Storage interface updated with Form 8949 and Schedule D methods
+- Storage interface updated with Form 8949 and Schedule D methods (both MemStorage and DbStorage)
+- Frontend Schedule D page with calculation trigger, short/long-term displays, Form 8949 table
+- Sidebar navigation and routing integrated
+- End-to-end testing confirmed accurate capital gains calculations
 
 ## Development Guidelines
 
