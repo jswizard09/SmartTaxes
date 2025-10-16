@@ -1,0 +1,60 @@
+Tax Filing Web Application
+Project Goal: Build a modern, user-friendly web application that simplifies tax return filing by supporting multiple tax document formats (consolidated 1099-DIV, 1099-INT, 1099-B, mortgage interest statements, W-2s, etc.) with intelligent parsing and automatic Form 1040/8949 generation.
+Tech Stack:
+•	Frontend: React 18+ with TypeScript, Tailwind CSS for styling, React Hook Form for form management
+•	Backend: Node.js with Express.js, TypeScript
+•	Database: PostgreSQL for structured tax data, with Prisma ORM
+•	File Processing: pdf-parse for PDF extraction, xlsx for Excel files, csv-parser for CSV
+•	Authentication: JWT with OAuth 2.0 support
+•	Storage: Local file system initially, with option to upgrade to AWS S3
+•	Tax Calculation Engine: Custom logic following IRS Publication 17 and tax brackets
+Core Features to Implement:
+1.	Multi-Format File Upload System
+•	Support PDF, CSV, Excel, and image formats (via OCR)
+•	Drag-and-drop interface with file preview
+•	Intelligent document type detection (1099-DIV, 1099-INT, 1099-B, W-2, 1098, etc.)
+•	Consolidated 1099 parser that separates DIV, INT, and capital gains sections
+2.	Data Extraction & Validation
+•	OCR integration for scanned documents using Tesseract.js
+•	Parse PDFs to extract key fields (proceeds, cost basis, ordinary income, dividends)
+•	Detect and flag potential errors (missing cost basis, wash sales, etc.)
+•	Smart field mapping that handles various broker formats (Fidelity, E*TRADE, Vanguard)
+3.	Tax Form Generation
+•	Auto-populate Form 1040 lines 1-37
+•	Generate Schedule D for capital gains/losses
+•	Create Form 8949 with proper categorization (Box A, B, D, E)
+•	Handle RSU/stock option adjustments with supplemental data integration
+•	Support Schedule E for rental income/partnerships
+•	Calculate Additional Medicare Tax (Form 8959) and Net Investment Income Tax (Form 8960)
+4.	Interactive Tax Interview
+•	Step-by-step guided workflow for data entry
+•	Real-time tax calculation preview
+•	Deduction optimizer suggesting HSA, QBI, standard vs itemized
+•	Capital loss carryforward tracker
+5.	Review & Validation Dashboard
+•	Side-by-side comparison of uploaded documents vs extracted data
+•	Error/warning flagging system
+•	Cost basis adjustment calculator for RSUs with W-2 reconciliation
+•	Tax summary with refund/amount owed breakdown
+6.	Security & Compliance
+•	End-to-end encryption for stored tax documents
+•	Multi-factor authentication
+•	Session timeout after 15 minutes
+•	Audit trail logging
+•	GDPR/CCPA compliance with data deletion capability
+Initial Implementation Steps:
+1.	Set up React + Express project structure with TypeScript
+2.	Create file upload component with drag-drop using react-dropzone
+3.	Build PDF parser middleware that extracts text from tax documents
+4.	Implement document classifier using pattern matching (detect “Form 1099-DIV”, “Form W-2”, etc.)
+5.	Design PostgreSQL schema for users, tax_returns, uploaded_documents, and form_data tables
+6.	Create API endpoints: `/api/upload`, `/api/parse`, `/api/calculate`, `/api/generate-forms`
+7.	Build React components: DocumentUploader, DataReviewTable, Form1040Preview, TaxSummary
+8.	Implement tax calculation engine with 2024 tax brackets and standard deductions
+9.	Add cost basis adjustment logic for RSU transactions (reading supplemental data)
+10.	Create PDF export functionality for completed Form 1040
+Special Considerations:
+•	RSU/Stock Option Handling: Parse Fidelity-style supplemental information to adjust cost basis from $0 to actual FMV at vest, preventing double taxation
+•	Consolidated 1099 Processing: Split single PDF into multiple form types by detecting section headers
+•	Wash Sale Detection: Flag transactions within 30-day windows with same security
+•	State Tax Support: Design modular architecture to add state return calculations later
