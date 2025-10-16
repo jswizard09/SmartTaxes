@@ -435,6 +435,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Form 1040 PDF Export route
+  app.get("/api/form1040/export", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const PDFDocument = require("pdfkit");
+      
+      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+      
+      const taxReturn = taxReturns[0];
+      const form1040 = await storage.getForm1040ByTaxReturnId(taxReturn.id);
+      
+      if (!form1040) {
+        return res.status(404).json({ message: "Form 1040 not found" });
+      }
+
+      const user = await storage.getUser(req.userId!);
+
+      // Create PDF document
+      const doc = new PDFDocument({ margin: 50 });
+
+      // Set response headers for PDF download
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="Form1040_${taxReturn.taxYear}.pdf"`
+      );
+
+      // Pipe PDF to response
+      doc.pipe(res);
+
+      // Add content to PDF
+      doc.fontSize(20).text("U.S. Individual Income Tax Return", { align: "center" });
+      doc.fontSize(16).text(`Form 1040 - ${taxReturn.taxYear}`, { align: "center" });
+      doc.moveDown(2);
+
+      // Taxpayer Information
+      doc.fontSize(14).text("Taxpayer Information", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(11).text(`Name: ${user?.username || "N/A"}`);
+      doc.text(`Email: ${user?.email || "N/A"}`);
+      doc.text(`Filing Status: ${taxReturn.filingStatus.replace(/_/g, " ").toUpperCase()}`);
+      doc.moveDown(1.5);
+
+      // Income Section
+      doc.fontSize(14).text("Income", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(11).text(`1. Wages, salaries, tips, etc: $${parseFloat(form1040.wages || "0").toFixed(2)}`);
+      doc.text(`2a. Tax-exempt interest: $0.00`);
+      doc.text(`2b. Taxable interest: $${parseFloat(form1040.interestIncome || "0").toFixed(2)}`);
+      doc.text(`3a. Qualified dividends: $${parseFloat(form1040.qualifiedDividends || "0").toFixed(2)}`);
+      doc.text(`3b. Ordinary dividends: $${parseFloat(form1040.dividendIncome || "0").toFixed(2)}`);
+      doc.text(`7. Capital gain or (loss): $${parseFloat(form1040.capitalGains || "0").toFixed(2)}`);
+      doc.text(`9. Total income: $${parseFloat(form1040.totalIncome || "0").toFixed(2)}`);
+      doc.moveDown(1.5);
+
+      // Adjusted Gross Income
+      doc.fontSize(14).text("Adjusted Gross Income", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(11).text(`10. Adjustments to income: $${parseFloat(form1040.adjustments || "0").toFixed(2)}`);
+      doc.text(`11. Adjusted gross income: $${parseFloat(form1040.adjustedGrossIncome || "0").toFixed(2)}`);
+      doc.moveDown(1.5);
+
+      // Tax and Credits
+      doc.fontSize(14).text("Tax and Credits", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(11).text(`12. Standard deduction: $${parseFloat(form1040.standardDeduction || "0").toFixed(2)}`);
+      doc.text(`15. Taxable income: $${parseFloat(form1040.taxableIncome || "0").toFixed(2)}`);
+      doc.text(`16. Tax: $${parseFloat(form1040.tax || "0").toFixed(2)}`);
+      doc.text(`19. Total tax: $${parseFloat(form1040.totalTax || "0").toFixed(2)}`);
+      doc.moveDown(1.5);
+
+      // Payments
+      doc.fontSize(14).text("Payments", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(11).text(`25. Federal income tax withheld: $${parseFloat(form1040.federalWithheld || "0").toFixed(2)}`);
+      doc.moveDown(1.5);
+
+      // Refund or Amount Owed
+      const refundOrOwed = parseFloat(form1040.refundOrOwed || "0");
+      doc.fontSize(14).text(refundOrOwed >= 0 ? "Refund" : "Amount You Owe", { underline: true });
+      doc.moveDown(0.5);
+      doc.fontSize(11).text(
+        refundOrOwed >= 0
+          ? `34. Amount to be refunded: $${refundOrOwed.toFixed(2)}`
+          : `37. Amount you owe: $${Math.abs(refundOrOwed).toFixed(2)}`
+      );
+      doc.moveDown(2);
+
+      // Footer
+      doc.fontSize(9).text(
+        `Generated on ${new Date().toLocaleDateString()} by TaxFile Pro`,
+        { align: "center", color: "gray" }
+      );
+
+      // Finalize PDF
+      doc.end();
+    } catch (error: any) {
+      console.error("PDF export error:", error);
+      res.status(500).json({ message: error.message || "PDF export failed" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
