@@ -1,9 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Loader2, FileText, Download } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import type { Form1040 } from "@shared/schema";
 
 export default function Form1040Page() {
+  const { toast } = useToast();
   const { data: form1040, isLoading } = useQuery<Form1040>({
     queryKey: ["/api/form1040"],
   });
@@ -14,6 +17,41 @@ export default function Form1040Page() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
+  };
+
+  const handleDownloadPDF = async () => {
+    try {
+      const response = await fetch("/api/form1040/export", {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to generate PDF");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Form1040_2024.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "PDF Downloaded",
+        description: "Your Form 1040 has been downloaded successfully.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Download Failed",
+        description: error.message || "Failed to download PDF. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   if (isLoading) {
@@ -61,10 +99,18 @@ export default function Form1040Page() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Form 1040 Preview</CardTitle>
-          <CardDescription>
-            Review your completed tax form before filing
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Form 1040 Preview</CardTitle>
+              <CardDescription>
+                Review your completed tax form before filing
+              </CardDescription>
+            </div>
+            <Button onClick={handleDownloadPDF} data-testid="button-download-pdf">
+              <Download className="h-4 w-4 mr-2" />
+              Download PDF
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="border rounded-lg p-6 bg-card space-y-6">
