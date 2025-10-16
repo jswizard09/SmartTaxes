@@ -15,8 +15,19 @@ import {
   type Insert1099B,
   type Form1040,
   type Insert1040,
+  users,
+  taxReturns,
+  documents,
+  w2Data,
+  form1099Div,
+  form1099Int,
+  form1099B,
+  form1040,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
+import { eq } from "drizzle-orm";
 
 export interface IStorage {
   // User methods
@@ -253,4 +264,150 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+export class DbStorage implements IStorage {
+  private db;
+
+  constructor() {
+    if (!process.env.DATABASE_URL) {
+      throw new Error("DATABASE_URL is required");
+    }
+    const sql = neon(process.env.DATABASE_URL);
+    this.db = drizzle(sql);
+  }
+
+  // User methods
+  async getUser(id: string): Promise<User | undefined> {
+    const result = await this.db.select().from(users).where(eq(users.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const result = await this.db.select().from(users).where(eq(users.username, username)).limit(1);
+    return result[0];
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const result = await this.db.insert(users).values(insertUser).returning();
+    return result[0];
+  }
+
+  // Tax Return methods
+  async getTaxReturn(id: string): Promise<TaxReturn | undefined> {
+    const result = await this.db.select().from(taxReturns).where(eq(taxReturns.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getTaxReturnsByUserId(userId: string): Promise<TaxReturn[]> {
+    return await this.db.select().from(taxReturns).where(eq(taxReturns.userId, userId));
+  }
+
+  async createTaxReturn(insertTaxReturn: InsertTaxReturn): Promise<TaxReturn> {
+    const result = await this.db.insert(taxReturns).values(insertTaxReturn).returning();
+    return result[0];
+  }
+
+  async updateTaxReturn(id: string, data: Partial<TaxReturn>): Promise<TaxReturn> {
+    const result = await this.db
+      .update(taxReturns)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(taxReturns.id, id))
+      .returning();
+    
+    if (!result[0]) throw new Error("Tax return not found");
+    return result[0];
+  }
+
+  // Document methods
+  async getDocument(id: string): Promise<Document | undefined> {
+    const result = await this.db.select().from(documents).where(eq(documents.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getDocumentsByTaxReturnId(taxReturnId: string): Promise<Document[]> {
+    return await this.db.select().from(documents).where(eq(documents.taxReturnId, taxReturnId));
+  }
+
+  async createDocument(insertDocument: InsertDocument): Promise<Document> {
+    const result = await this.db.insert(documents).values(insertDocument).returning();
+    return result[0];
+  }
+
+  async updateDocument(id: string, data: Partial<Document>): Promise<Document> {
+    const result = await this.db
+      .update(documents)
+      .set(data)
+      .where(eq(documents.id, id))
+      .returning();
+    
+    if (!result[0]) throw new Error("Document not found");
+    return result[0];
+  }
+
+  async deleteDocument(id: string): Promise<void> {
+    await this.db.delete(documents).where(eq(documents.id, id));
+  }
+
+  // W-2 Data methods
+  async getW2DataByTaxReturnId(taxReturnId: string): Promise<W2Data[]> {
+    return await this.db.select().from(w2Data).where(eq(w2Data.taxReturnId, taxReturnId));
+  }
+
+  async createW2Data(insertW2: InsertW2): Promise<W2Data> {
+    const result = await this.db.insert(w2Data).values(insertW2).returning();
+    return result[0];
+  }
+
+  // 1099-DIV methods
+  async get1099DivByTaxReturnId(taxReturnId: string): Promise<Form1099Div[]> {
+    return await this.db.select().from(form1099Div).where(eq(form1099Div.taxReturnId, taxReturnId));
+  }
+
+  async create1099Div(insert1099Div: Insert1099Div): Promise<Form1099Div> {
+    const result = await this.db.insert(form1099Div).values(insert1099Div).returning();
+    return result[0];
+  }
+
+  // 1099-INT methods
+  async get1099IntByTaxReturnId(taxReturnId: string): Promise<Form1099Int[]> {
+    return await this.db.select().from(form1099Int).where(eq(form1099Int.taxReturnId, taxReturnId));
+  }
+
+  async create1099Int(insert1099Int: Insert1099Int): Promise<Form1099Int> {
+    const result = await this.db.insert(form1099Int).values(insert1099Int).returning();
+    return result[0];
+  }
+
+  // 1099-B methods
+  async get1099BByTaxReturnId(taxReturnId: string): Promise<Form1099B[]> {
+    return await this.db.select().from(form1099B).where(eq(form1099B.taxReturnId, taxReturnId));
+  }
+
+  async create1099B(insert1099B: Insert1099B): Promise<Form1099B> {
+    const result = await this.db.insert(form1099B).values(insert1099B).returning();
+    return result[0];
+  }
+
+  // Form 1040 methods
+  async getForm1040ByTaxReturnId(taxReturnId: string): Promise<Form1040 | undefined> {
+    const result = await this.db.select().from(form1040).where(eq(form1040.taxReturnId, taxReturnId)).limit(1);
+    return result[0];
+  }
+
+  async createForm1040(insert1040: Insert1040): Promise<Form1040> {
+    const result = await this.db.insert(form1040).values(insert1040).returning();
+    return result[0];
+  }
+
+  async updateForm1040(id: string, data: Partial<Form1040>): Promise<Form1040> {
+    const result = await this.db
+      .update(form1040)
+      .set(data)
+      .where(eq(form1040.id, id))
+      .returning();
+    
+    if (!result[0]) throw new Error("Form 1040 not found");
+    return result[0];
+  }
+}
+
+export const storage = new DbStorage();
