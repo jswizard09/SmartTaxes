@@ -11,6 +11,7 @@ import {
   parsePDF,
   parseCSV,
   parseExcel,
+  parseImageWithOCR,
   detectDocumentType,
   parseW2Data,
   parse1099DivData,
@@ -208,6 +209,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } else if (file.mimetype.includes("spreadsheet") || file.mimetype.includes("excel")) {
             const excelData = await parseExcel(file.path);
             text = JSON.stringify(excelData);
+          } else if (file.mimetype.startsWith("image/")) {
+            // Use OCR for image files (JPG, PNG, etc.)
+            text = await parseImageWithOCR(file.path);
           }
 
           const docType = detectDocumentType(text);
