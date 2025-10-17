@@ -56,6 +56,13 @@ export default function File() {
     queryKey: ["/api/tax-returns"],
   });
 
+  const { data: activeYear } = useQuery<{ year: number } | null>({
+    queryKey: ["/api/tax-config/active-year"],
+    enabled: !!localStorage.getItem("token"),
+  });
+
+  const currentYear = activeYear?.year || new Date().getFullYear();
+
   const { data: form1040, isLoading: formLoading } = useQuery<Form1040 | null>({
     queryKey: ["/api/form1040"],
     enabled: !!taxReturns && taxReturns.length > 0,
@@ -104,7 +111,7 @@ export default function File() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `TaxForms_${taxReturns?.[0]?.taxYear || 2024}.pdf`;
+      a.download = `TaxForms_${taxReturns?.[0]?.taxYear || currentYear}.pdf`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -196,7 +203,7 @@ export default function File() {
   const canProceed = () => {
     switch (currentStep) {
       case 0:
-        return filingMethod !== "";
+        return true; // filingMethod is always set to a valid value
       case 1:
         if (filingMethod === "efile") {
           return signatureConsent && validateBankAccount();

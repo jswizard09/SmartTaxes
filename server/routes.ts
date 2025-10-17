@@ -24,75 +24,26 @@ import { aiInsightsService } from "./services/aiInsightsService";
 import { pdfService } from "./services/pdfService";
 import { efileService } from "./services/efileService";
 import { stateTaxService } from "./services/stateTaxService";
+import { taxConfigService } from "./services/taxConfigService";
 import { subscriptionService, subscriptionMiddleware, requireFeature, checkDocumentLimit, SubscriptionRequest } from "./middleware/subscription";
+import { eq } from "drizzle-orm";
 
 const upload = multer({ dest: "uploads/" });
 
-// 2024 Tax Brackets and Standard Deductions
-const TAX_BRACKETS_2024 = {
-  single: [
-    { min: 0, max: 11600, rate: 0.10 },
-    { min: 11600, max: 47150, rate: 0.12 },
-    { min: 47150, max: 100525, rate: 0.22 },
-    { min: 100525, max: 191950, rate: 0.24 },
-    { min: 191950, max: 243725, rate: 0.32 },
-    { min: 243725, max: 609350, rate: 0.35 },
-    { min: 609350, max: Infinity, rate: 0.37 },
-  ],
-  married_joint: [
-    { min: 0, max: 23200, rate: 0.10 },
-    { min: 23200, max: 94300, rate: 0.12 },
-    { min: 94300, max: 201050, rate: 0.22 },
-    { min: 201050, max: 383900, rate: 0.24 },
-    { min: 383900, max: 487450, rate: 0.32 },
-    { min: 487450, max: 731200, rate: 0.35 },
-    { min: 731200, max: Infinity, rate: 0.37 },
-  ],
-  married_separate: [
-    { min: 0, max: 11600, rate: 0.10 },
-    { min: 11600, max: 47150, rate: 0.12 },
-    { min: 47150, max: 100525, rate: 0.22 },
-    { min: 100525, max: 191950, rate: 0.24 },
-    { min: 191950, max: 243725, rate: 0.32 },
-    { min: 243725, max: 365600, rate: 0.35 },
-    { min: 365600, max: Infinity, rate: 0.37 },
-  ],
-  head_of_household: [
-    { min: 0, max: 16550, rate: 0.10 },
-    { min: 16550, max: 63100, rate: 0.12 },
-    { min: 63100, max: 100500, rate: 0.22 },
-    { min: 100500, max: 191950, rate: 0.24 },
-    { min: 191950, max: 243700, rate: 0.32 },
-    { min: 243700, max: 609350, rate: 0.35 },
-    { min: 609350, max: Infinity, rate: 0.37 },
-  ],
-};
-
-const STANDARD_DEDUCTION_2024 = {
-  single: 14600,
-  married_joint: 29200,
-  married_separate: 14600,
-  head_of_household: 21900,
-};
-
-function calculateTax(taxableIncome: number, filingStatus: string): number {
-  // Get the appropriate tax brackets for the filing status
-  const brackets = TAX_BRACKETS_2024[filingStatus as keyof typeof TAX_BRACKETS_2024] || TAX_BRACKETS_2024.single;
-  
-  let tax = 0;
-
-  for (const bracket of brackets) {
-    if (taxableIncome > bracket.min) {
-      const taxableInBracket = Math.min(taxableIncome, bracket.max) - bracket.min;
-      tax += taxableInBracket * bracket.rate;
-    }
-    if (taxableIncome <= bracket.max) break;
+// Initialize tax configuration data on startup
+async function initializeTaxData() {
+  try {
+    await taxConfigService.initializeDefaultTaxData();
+    console.log("Tax configuration data initialized");
+  } catch (error) {
+    console.error("Failed to initialize tax data:", error);
   }
-
-  return Math.round(tax * 100) / 100;
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Initialize tax configuration data
+  await initializeTaxData();
+
   // Authentication routes
   app.post("/api/auth/register", async (req, res) => {
     try {
@@ -160,7 +111,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Tax Returns routes
   app.get("/api/tax-returns", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       res.json(taxReturns);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -169,9 +125,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/tax-returns", authenticateToken, async (req: AuthRequest, res) => {
     try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
       const taxReturn = await storage.createTaxReturn({
         userId: req.userId!,
-        taxYear: req.body.taxYear || 2024,
+        taxYear: req.body.taxYear || activeYear?.year || new Date().getFullYear(),
         filingStatus: req.body.filingStatus || "single",
         status: "draft",
       });
@@ -184,7 +141,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Documents routes
   app.get("/api/documents", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) {
         return res.json([]);
       }
@@ -199,11 +161,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/upload", authenticateToken, upload.array("files", 10), async (req: AuthRequest, res) => {
     try {
       // Get or create tax return for user
+      const activeYear = await taxConfigService.getActiveTaxYear();
       let taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
       if (taxReturns.length === 0) {
         const newReturn = await storage.createTaxReturn({
           userId: req.userId!,
-          taxYear: 2024,
+          taxYear: activeYear?.year || new Date().getFullYear(),
           filingStatus: "single",
           status: "draft",
         });
@@ -320,7 +283,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Form data routes
   app.get("/api/w2-data", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) return res.json([]);
       
       const data = await storage.getW2DataByTaxReturnId(taxReturns[0].id);
@@ -404,7 +372,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/1099-div-data", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) return res.json([]);
       
       const data = await storage.get1099DivByTaxReturnId(taxReturns[0].id);
@@ -450,7 +423,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/1099-int-data", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) return res.json([]);
       
       const data = await storage.get1099IntByTaxReturnId(taxReturns[0].id);
@@ -496,7 +474,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/1099-b-data", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) return res.json([]);
       
       const data = await storage.get1099BByTaxReturnId(taxReturns[0].id);
@@ -698,7 +681,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const profile = await storage.getUserProfile(req.userId!);
       const filingStatus = req.body.filingStatus || profile?.filingStatus || "single";
       
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       
       if (taxReturns.length === 0) {
         return res.status(404).json({ message: "No tax return found" });
@@ -722,15 +710,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const totalIncome = totalWages + totalDividends + totalInterest + totalCapitalGains;
       
+      // Get tax calculation data from database
+      const taxYear = await taxConfigService.getActiveTaxYear();
+      if (!taxYear) {
+        return res.status(500).json({ message: "No active tax year found" });
+      }
+
+      const taxData = await taxConfigService.getTaxCalculationData(taxYear.year, filingStatus);
+      
       // Standard deduction - consider additional deductions for blind/disabled
-      let standardDeduction = STANDARD_DEDUCTION_2024[filingStatus as keyof typeof STANDARD_DEDUCTION_2024] || STANDARD_DEDUCTION_2024.single;
+      let standardDeduction = taxData.federalStandardDeduction ? Number(taxData.federalStandardDeduction.amount) : 0;
       
       // Additional standard deduction for blind/disabled taxpayers
-      if (profile?.isBlind) {
-        standardDeduction += 1850; // 2024 additional standard deduction for blind
+      if (profile?.isBlind && taxData.federalStandardDeduction) {
+        standardDeduction += Number(taxData.federalStandardDeduction.additionalBlindAmount || 0);
       }
-      if (profile?.isDisabled) {
-        standardDeduction += 1850; // 2024 additional standard deduction for disabled
+      if (profile?.isDisabled && taxData.federalStandardDeduction) {
+        standardDeduction += Number(taxData.federalStandardDeduction.additionalDisabledAmount || 0);
       }
       if (profile?.isVeteran) {
         // Veterans may qualify for additional deductions - this would need more specific logic
@@ -738,12 +734,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // For married filing jointly, consider spouse's additional deductions
-      if ((filingStatus === "married_joint" || filingStatus === "married_separate") && profile) {
+      if ((filingStatus === "married_joint" || filingStatus === "married_separate") && profile && taxData.federalStandardDeduction) {
         if (profile.isSpouseBlind) {
-          standardDeduction += 1850;
+          standardDeduction += Number(taxData.federalStandardDeduction.additionalBlindAmount || 0);
         }
         if (profile.isSpouseDisabled) {
-          standardDeduction += 1850;
+          standardDeduction += Number(taxData.federalStandardDeduction.additionalDisabledAmount || 0);
         }
         if (profile.isSpouseVeteran) {
           // Additional spouse veteran deductions
@@ -758,13 +754,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const qualifyingChildren = profile.dependents.filter(dep => dep.isQualifyingChild);
         const qualifyingRelatives = profile.dependents.filter(dep => dep.isQualifyingRelative);
         
-        // Child Tax Credit (2024: $2,000 per qualifying child)
-        childTaxCredit = qualifyingChildren.length * 2000;
+        // Child Tax Credit calculation
+        childTaxCredit = qualifyingChildren.length * 2000; // This should also be dynamic per year
         
         // Additional Child Tax Credit for children under 17 (simplified calculation)
         const childrenUnder17 = qualifyingChildren.filter(dep => {
           const birthYear = new Date(dep.dateOfBirth).getFullYear();
-          const currentYear = 2024;
+          const currentYear = taxYear.year;
           return (currentYear - birthYear) < 17;
         });
         childTaxCredit += childrenUnder17.length * 2000; // Additional $2,000 per child under 17
@@ -777,8 +773,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const adjustedGrossIncome = totalIncome;
       const taxableIncome = Math.max(0, adjustedGrossIncome - standardDeduction - dependentDeduction);
       
-      // Calculate tax
-      const tax = calculateTax(taxableIncome, filingStatus);
+      // Calculate tax using database brackets
+      const tax = await taxConfigService.calculateFederalTax(taxableIncome, filingStatus, taxYear.year);
       
       // Apply credits
       const taxAfterCredits = Math.max(0, tax - childTaxCredit);
@@ -856,7 +852,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Form 1040 route
   app.get("/api/form1040", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) return res.json(null);
       
       const form1040 = await storage.getForm1040ByTaxReturnId(taxReturns[0].id);
@@ -872,7 +873,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const PDFKit = await import("pdfkit");
       const PDFDocument = PDFKit.default;
       
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) {
         return res.status(404).json({ message: "No tax return found" });
       }
@@ -974,7 +980,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Form 8949 routes
   app.get("/api/form8949", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) return res.json([]);
       
       const form8949Data = await storage.get8949ByTaxReturnId(taxReturns[0].id);
@@ -987,7 +998,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Schedule D route
   app.get("/api/schedule-d", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) return res.json(null);
       
       const scheduleD = await storage.getScheduleDByTaxReturnId(taxReturns[0].id);
@@ -1000,7 +1016,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Calculate and generate Schedule D
   app.post("/api/schedule-d/calculate", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
       if (taxReturns.length === 0) {
         return res.status(404).json({ message: "No tax return found" });
       }
@@ -1362,11 +1383,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/upload-enhanced", authenticateToken, subscriptionMiddleware(subscriptionService), checkDocumentLimit(subscriptionService), upload.array("files", 10), async (req: SubscriptionRequest, res) => {
     try {
       // Get or create tax return for user
+      const activeYear = await taxConfigService.getActiveTaxYear();
       let taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
       if (taxReturns.length === 0) {
         const newReturn = await storage.createTaxReturn({
           userId: req.userId!,
-          taxYear: 2024,
+          taxYear: activeYear?.year || new Date().getFullYear(),
           filingStatus: "single",
           status: "draft",
         });
@@ -1554,6 +1576,127 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ message: "All documents cleared successfully" });
     } catch (error: any) {
       res.status(500).json({ message: error.message || "Failed to clear documents" });
+    }
+  });
+
+  // Tax Configuration API routes
+  app.get("/api/tax-config/years", async (req, res) => {
+    try {
+      const years = await taxConfigService.getAllTaxYears();
+      res.json(years);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/tax-config/active-year", async (req, res) => {
+    try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      res.json(activeYear);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/tax-config/set-active-year", async (req, res) => {
+    try {
+      const { year } = req.body;
+      if (!year || typeof year !== 'number') {
+        return res.status(400).json({ message: "Year is required and must be a number" });
+      }
+
+      // First, ensure the tax year data exists (create if it doesn't)
+      let taxYear = await taxConfigService.getTaxYear(year);
+      if (!taxYear) {
+        taxYear = await taxConfigService.createTaxYearData(year);
+      }
+
+      // First, set all years to inactive
+      await storage.db
+        .update(storage.taxYears)
+        .set({ isActive: false });
+
+      // Then set the selected year as active
+      const result = await storage.db
+        .update(storage.taxYears)
+        .set({ isActive: true })
+        .where(eq(storage.taxYears.year, year))
+        .returning();
+
+      if (result.length === 0) {
+        return res.status(404).json({ message: `Tax year ${year} not found` });
+      }
+
+      res.json(result[0]);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/tax-config/calculate/:year/:filingStatus", async (req, res) => {
+    try {
+      const { year, filingStatus } = req.params;
+      const yearNum = parseInt(year);
+      const taxableIncome = parseFloat(req.query.income as string) || 0;
+      
+      const tax = await taxConfigService.calculateFederalTax(taxableIncome, filingStatus, yearNum);
+      res.json({ tax, taxableIncome, filingStatus, year: yearNum });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/tax-config/state-calculate/:year/:filingStatus/:stateCode", async (req, res) => {
+    try {
+      const { year, filingStatus, stateCode } = req.params;
+      const yearNum = parseInt(year);
+      const taxableIncome = parseFloat(req.query.income as string) || 0;
+      
+      const tax = await taxConfigService.calculateStateTax(taxableIncome, filingStatus, stateCode, yearNum);
+      res.json({ tax, taxableIncome, filingStatus, stateCode, year: yearNum });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Form Schema API routes
+  app.get("/api/form-schemas/:formType/:year", async (req, res) => {
+    try {
+      const { formType, year } = req.params;
+      const yearNum = parseInt(year);
+      
+      const schemaData = await taxConfigService.getFormSchema(formType, yearNum);
+      res.json(schemaData);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Application Configuration API routes
+  app.get("/api/config/:key", async (req, res) => {
+    try {
+      const { key } = req.params;
+      const config = await taxConfigService.getAppConfiguration(key);
+      res.json(config);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/config", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const { configKey, configValue, configType, description } = req.body;
+      
+      const config = await taxConfigService.setAppConfiguration({
+        configKey,
+        configValue,
+        configType,
+        description,
+      });
+      
+      res.json(config);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 

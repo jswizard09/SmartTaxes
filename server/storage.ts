@@ -39,6 +39,22 @@ import {
   type InsertEfileSubmission,
   type StateTaxReturn,
   type InsertStateTaxReturn,
+  type TaxYear,
+  type InsertTaxYear,
+  type FederalTaxBracket,
+  type InsertFederalTaxBracket,
+  type FederalStandardDeduction,
+  type InsertFederalStandardDeduction,
+  type StateTaxBracket,
+  type InsertStateTaxBracket,
+  type StateStandardDeduction,
+  type InsertStateStandardDeduction,
+  type FormSchema,
+  type InsertFormSchema,
+  type FormFieldDefinition,
+  type InsertFormFieldDefinition,
+  type AppConfiguration,
+  type InsertAppConfiguration,
   users,
   userProfiles,
   taxReturns,
@@ -48,6 +64,14 @@ import {
   form1099Int,
   form1099B,
   form1099BEntries,
+  taxYears,
+  federalTaxBrackets,
+  federalStandardDeductions,
+  stateTaxBrackets,
+  stateStandardDeductions,
+  formSchemas,
+  formFieldDefinitions,
+  appConfigurations,
   form1040,
   form8949,
   scheduleD,
@@ -79,6 +103,7 @@ export interface IStorage {
   // Tax Return methods
   getTaxReturn(id: string): Promise<TaxReturn | undefined>;
   getTaxReturnsByUserId(userId: string): Promise<TaxReturn[]>;
+  getTaxReturnsByUserIdAndYear(userId: string, year: number): Promise<TaxReturn[]>;
   createTaxReturn(taxReturn: InsertTaxReturn): Promise<TaxReturn>;
   updateTaxReturn(id: string, data: Partial<TaxReturn>): Promise<TaxReturn>;
 
@@ -300,6 +325,12 @@ export class MemStorage implements IStorage {
   async getTaxReturnsByUserId(userId: string): Promise<TaxReturn[]> {
     return Array.from(this.taxReturns.values()).filter(
       (tr) => tr.userId === userId
+    );
+  }
+
+  async getTaxReturnsByUserIdAndYear(userId: string, year: number): Promise<TaxReturn[]> {
+    return Array.from(this.taxReturns.values()).filter(
+      (tr) => tr.userId === userId && tr.taxYear === year
     );
   }
 
@@ -951,7 +982,15 @@ export class MemStorage implements IStorage {
 }
 
 export class DbStorage implements IStorage {
-  private db;
+  public db;
+  public readonly taxYears = taxYears;
+  public readonly federalTaxBrackets = federalTaxBrackets;
+  public readonly federalStandardDeductions = federalStandardDeductions;
+  public readonly stateTaxBrackets = stateTaxBrackets;
+  public readonly stateStandardDeductions = stateStandardDeductions;
+  public readonly formSchemas = formSchemas;
+  public readonly formFieldDefinitions = formFieldDefinitions;
+  public readonly appConfigurations = appConfigurations;
 
   constructor() {
     if (!process.env.DATABASE_URL) {
@@ -1011,6 +1050,13 @@ export class DbStorage implements IStorage {
 
   async getTaxReturnsByUserId(userId: string): Promise<TaxReturn[]> {
     return await this.db.select().from(taxReturns).where(eq(taxReturns.userId, userId));
+  }
+
+  async getTaxReturnsByUserIdAndYear(userId: string, year: number): Promise<TaxReturn[]> {
+    return await this.db
+      .select()
+      .from(taxReturns)
+      .where(and(eq(taxReturns.userId, userId), eq(taxReturns.taxYear, year)));
   }
 
   async createTaxReturn(insertTaxReturn: InsertTaxReturn): Promise<TaxReturn> {
@@ -1215,7 +1261,7 @@ export class DbStorage implements IStorage {
 
   async delete1099BEntry(id: string): Promise<void> {
     const result = await this.db.delete(form1099BEntries).where(eq(form1099BEntries.id, id));
-    if (result.rowCount === 0) {
+    if (result.length === 0) {
       throw new Error("1099-B entry not found");
     }
   }

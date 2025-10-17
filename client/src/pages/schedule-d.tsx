@@ -9,6 +9,13 @@ import type { ScheduleD, Form8949 } from "@shared/schema";
 export default function ScheduleDPage() {
   const { toast } = useToast();
 
+  const { data: activeYear } = useQuery<{ year: number } | null>({
+    queryKey: ["/api/tax-config/active-year"],
+    enabled: !!localStorage.getItem("token"),
+  });
+
+  const currentYear = activeYear?.year || new Date().getFullYear();
+
   const { data: scheduleD, isLoading: scheduleDLoading } = useQuery<ScheduleD>({
     queryKey: ["/api/schedule-d"],
   });
@@ -65,7 +72,7 @@ export default function ScheduleDPage() {
         <div>
           <h1 className="text-4xl font-bold text-foreground mb-2">Schedule D</h1>
           <p className="text-lg text-muted-foreground">
-            Capital Gains and Losses for 2024
+            Capital Gains and Losses for {currentYear}
           </p>
         </div>
         <Button 

@@ -11,6 +11,13 @@ export default function Form1040Page() {
     queryKey: ["/api/form1040"],
   });
 
+  const { data: activeYear } = useQuery<{ year: number } | null>({
+    queryKey: ["/api/tax-config/active-year"],
+    enabled: !!localStorage.getItem("token"),
+  });
+
+  const currentYear = activeYear?.year || new Date().getFullYear();
+
   const formatCurrency = (value: string | null | undefined) => {
     if (!value) return "$0.00";
     return `$${parseFloat(value).toLocaleString("en-US", {
@@ -35,7 +42,7 @@ export default function Form1040Page() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Form1040_2024.pdf`;
+      a.download = `Form1040_${currentYear}.pdf`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -68,7 +75,7 @@ export default function Form1040Page() {
         <div>
           <h1 className="text-4xl font-bold text-foreground mb-2">Form 1040</h1>
           <p className="text-lg text-muted-foreground">
-            U.S. Individual Income Tax Return for 2024
+            U.S. Individual Income Tax Return for {currentYear}
           </p>
         </div>
         <Card>
@@ -93,7 +100,7 @@ export default function Form1040Page() {
       <div>
         <h1 className="text-4xl font-bold text-foreground mb-2">Form 1040</h1>
         <p className="text-lg text-muted-foreground">
-          U.S. Individual Income Tax Return for 2024
+          U.S. Individual Income Tax Return for {currentYear}
         </p>
       </div>
 
@@ -119,7 +126,7 @@ export default function Form1040Page() {
                 U.S. Individual Income Tax Return
               </h2>
               <p className="text-sm text-muted-foreground mt-1">
-                Form 1040 • Tax Year 2024
+                Form 1040 • Tax Year {currentYear}
               </p>
             </div>
 

@@ -11,6 +11,11 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [isClearing, setIsClearing] = useState(false);
 
+  const { data: activeYear } = useQuery<{ year: number } | null>({
+    queryKey: ["/api/tax-config/active-year"],
+    enabled: !!localStorage.getItem("token"),
+  });
+
   const { data: taxReturns, isLoading: returnsLoading } = useQuery<TaxReturn[]>({
     queryKey: ["/api/tax-returns"],
   });
@@ -63,6 +68,7 @@ export default function Dashboard() {
   const currentReturn = taxReturns?.[0];
   const documentCount = documents?.length || 0;
   const parsedCount = documents?.filter((d) => d.status === "parsed").length || 0;
+  const currentYear = activeYear?.year || new Date().getFullYear();
 
   return (
     <div className="space-y-8">
@@ -71,7 +77,7 @@ export default function Dashboard() {
           Tax Dashboard
         </h1>
         <p className="text-lg text-muted-foreground">
-          Welcome back! Let's complete your 2024 tax return.
+          Welcome back! Let's complete your {currentYear} tax return.
         </p>
       </div>
 
@@ -98,7 +104,7 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold font-mono" data-testid="text-tax-year">
-              {currentReturn?.taxYear || 2024}
+              {currentReturn?.taxYear || currentYear}
             </div>
             <p className="text-sm text-muted-foreground mt-1">
               Filing Status: {currentReturn?.filingStatus || "Single"}
@@ -250,7 +256,7 @@ export default function Dashboard() {
               <div className="flex-1">
                 <h4 className="font-medium text-foreground">Upload Documents</h4>
                 <p className="text-sm text-muted-foreground">
-                  Upload all W-2 and 1099 forms for tax year 2024
+                  Upload all W-2 and 1099 forms for tax year {currentYear}
                 </p>
               </div>
             </div>

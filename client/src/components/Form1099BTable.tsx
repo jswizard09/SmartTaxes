@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Trash2, Save } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import type { Form1099BEntry } from "@shared/schema";
 
 interface Form1099BTableProps {
@@ -35,9 +36,14 @@ export default function Form1099BTable({
   const [entryData, setEntryData] = useState<Record<string, Form1099BEntry & { washSaleAmount?: string | null }>>({});
   const [hasChanges, setHasChanges] = useState(false);
 
-  // Get current tax year (assuming 2024 for now, but could be dynamic)
+  const { data: activeYear } = useQuery<{ year: number } | null>({
+    queryKey: ["/api/tax-config/active-year"],
+    enabled: !!localStorage.getItem("token"),
+  });
+
+  // Get current tax year dynamically
   const getCurrentTaxYear = () => {
-    return "2024";
+    return activeYear?.year?.toString() || new Date().getFullYear().toString();
   };
 
   const getTaxYearRange = () => {

@@ -573,3 +573,165 @@ export const EFILE_STATUS = {
   REJECTED: "rejected",
   ERROR: "error",
 } as const;
+
+// Tax Configuration Tables
+export const taxYears = pgTable("tax_years", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  year: integer("year").notNull().unique(),
+  isActive: boolean("is_active").default(false),
+  federalDeadline: text("federal_deadline"), // "2024-04-15"
+  stateDeadlines: jsonb("state_deadlines"), // {CA: "2024-04-15", NY: "2024-04-15"}
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const federalTaxBrackets = pgTable("federal_tax_brackets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxYearId: varchar("tax_year_id").notNull().references(() => taxYears.id),
+  filingStatus: text("filing_status").notNull(), // single, married_joint, etc.
+  minIncome: decimal("min_income", { precision: 12, scale: 2 }).notNull(),
+  maxIncome: decimal("max_income", { precision: 12, scale: 2 }),
+  taxRate: decimal("tax_rate", { precision: 5, scale: 4 }).notNull(), // 0.10 for 10%
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const federalStandardDeductions = pgTable("federal_standard_deductions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxYearId: varchar("tax_year_id").notNull().references(() => taxYears.id),
+  filingStatus: text("filing_status").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  additionalBlindAmount: decimal("additional_blind_amount", { precision: 12, scale: 2 }).default("0"),
+  additionalDisabledAmount: decimal("additional_disabled_amount", { precision: 12, scale: 2 }).default("0"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const stateTaxBrackets = pgTable("state_tax_brackets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxYearId: varchar("tax_year_id").notNull().references(() => taxYears.id),
+  stateCode: text("state_code").notNull(), // CA, NY, TX, etc.
+  filingStatus: text("filing_status").notNull(),
+  minIncome: decimal("min_income", { precision: 12, scale: 2 }).notNull(),
+  maxIncome: decimal("max_income", { precision: 12, scale: 2 }),
+  taxRate: decimal("tax_rate", { precision: 5, scale: 4 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const stateStandardDeductions = pgTable("state_standard_deductions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxYearId: varchar("tax_year_id").notNull().references(() => taxYears.id),
+  stateCode: text("state_code").notNull(),
+  filingStatus: text("filing_status").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Form Configuration Tables
+export const formSchemas = pgTable("form_schemas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  formType: text("form_type").notNull(), // W-2, 1099-DIV, 1099-INT, 1099-B
+  taxYearId: varchar("tax_year_id").notNull().references(() => taxYears.id),
+  schemaVersion: text("schema_version").notNull().default("1.0"),
+  fields: jsonb("fields").notNull(), // Array of field definitions
+  validationRules: jsonb("validation_rules"), // Validation rules for fields
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const formFieldDefinitions = pgTable("form_field_definitions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  formSchemaId: varchar("form_schema_id").notNull().references(() => formSchemas.id),
+  fieldName: text("field_name").notNull(),
+  fieldType: text("field_type").notNull(), // text, number, date, boolean
+  displayName: text("display_name").notNull(),
+  description: text("description"),
+  isRequired: boolean("is_required").default(false),
+  validationPattern: text("validation_pattern"), // Regex pattern
+  minLength: integer("min_length"),
+  maxLength: integer("max_length"),
+  minValue: decimal("min_value", { precision: 12, scale: 2 }),
+  maxValue: decimal("max_value", { precision: 12, scale: 2 }),
+  defaultValue: text("default_value"),
+  options: jsonb("options"), // For select fields
+  order: integer("order").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Application Configuration
+export const appConfigurations = pgTable("app_configurations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  configKey: text("config_key").notNull().unique(),
+  configValue: jsonb("config_value").notNull(),
+  configType: text("config_type").notNull(), // string, number, boolean, object, array
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Insert schemas for new tables
+export const insertTaxYearSchema = createInsertSchema(taxYears).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertFederalTaxBracketSchema = createInsertSchema(federalTaxBrackets).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertFederalStandardDeductionSchema = createInsertSchema(federalStandardDeductions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertStateTaxBracketSchema = createInsertSchema(stateTaxBrackets).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertStateStandardDeductionSchema = createInsertSchema(stateStandardDeductions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertFormSchemaSchema = createInsertSchema(formSchemas).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertFormFieldDefinitionSchema = createInsertSchema(formFieldDefinitions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertAppConfigurationSchema = createInsertSchema(appConfigurations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// Select types for new tables
+export type TaxYear = typeof taxYears.$inferSelect;
+export type InsertTaxYear = z.infer<typeof insertTaxYearSchema>;
+
+export type FederalTaxBracket = typeof federalTaxBrackets.$inferSelect;
+export type InsertFederalTaxBracket = z.infer<typeof insertFederalTaxBracketSchema>;
+
+export type FederalStandardDeduction = typeof federalStandardDeductions.$inferSelect;
+export type InsertFederalStandardDeduction = z.infer<typeof insertFederalStandardDeductionSchema>;
+
+export type StateTaxBracket = typeof stateTaxBrackets.$inferSelect;
+export type InsertStateTaxBracket = z.infer<typeof insertStateTaxBracketSchema>;
+
+export type StateStandardDeduction = typeof stateStandardDeductions.$inferSelect;
+export type InsertStateStandardDeduction = z.infer<typeof insertStateStandardDeductionSchema>;
+
+export type FormSchema = typeof formSchemas.$inferSelect;
+export type InsertFormSchema = z.infer<typeof insertFormSchemaSchema>;
+
+export type FormFieldDefinition = typeof formFieldDefinitions.$inferSelect;
+export type InsertFormFieldDefinition = z.infer<typeof insertFormFieldDefinitionSchema>;
+
+export type AppConfiguration = typeof appConfigurations.$inferSelect;
+export type InsertAppConfiguration = z.infer<typeof insertAppConfigurationSchema>;

@@ -1,5 +1,6 @@
 import { Home, Upload, FileText, Calculator, ClipboardCheck, TrendingUp, Lightbulb, Send, User } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sidebar,
   SidebarContent,
@@ -70,13 +71,20 @@ const menuItems = [
 
 export function AppSidebar() {
   const [location] = useLocation();
+  
+  const { data: activeYear } = useQuery<{ year: number } | null>({
+    queryKey: ["/api/tax-config/active-year"],
+    enabled: !!localStorage.getItem("token"),
+  });
+
+  const currentYear = activeYear?.year || new Date().getFullYear();
 
   return (
     <Sidebar>
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="text-sm font-semibold text-foreground">
-            Tax Filing 2024
+            Tax Filing {currentYear}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>

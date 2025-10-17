@@ -7,7 +7,10 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { YearSelector } from "@/components/year-selector";
+import { useQuery } from "@tanstack/react-query";
 import NotFound from "@/pages/not-found";
+import Landing from "@/pages/landing";
 import Login from "@/pages/login";
 import Dashboard from "@/pages/dashboard";
 import Profile from "@/pages/profile";
@@ -30,6 +33,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 function Router() {
   return (
     <Switch>
+      <Route path="/" component={Landing} />
       <Route path="/login" component={Login} />
       <Route path="/dashboard">
         {() => <ProtectedRoute component={Dashboard} />}
@@ -58,11 +62,25 @@ function Router() {
       <Route path="/file">
         {() => <ProtectedRoute component={File} />}
       </Route>
-      <Route path="/">
-        <Redirect to="/login" />
-      </Route>
       <Route component={NotFound} />
     </Switch>
+  );
+}
+
+function AppHeader() {
+  return (
+    <header className="flex items-center justify-between p-4 border-b bg-background">
+      <div className="flex items-center gap-4">
+        <SidebarTrigger data-testid="button-sidebar-toggle" />
+        <div>
+          <h2 className="text-xl font-bold text-foreground">TaxFile Pro</h2>
+          <div className="flex items-center gap-2">
+            <YearSelector />
+          </div>
+        </div>
+      </div>
+      <ThemeToggle />
+    </header>
   );
 }
 
@@ -94,16 +112,7 @@ function App() {
             <div className="flex h-screen w-full">
               <AppSidebar />
               <div className="flex flex-col flex-1">
-                <header className="flex items-center justify-between p-4 border-b bg-background">
-                  <div className="flex items-center gap-4">
-                    <SidebarTrigger data-testid="button-sidebar-toggle" />
-                    <div>
-                      <h2 className="text-xl font-bold text-foreground">TaxFile Pro</h2>
-                      <p className="text-xs text-muted-foreground">2024 Tax Year</p>
-                    </div>
-                  </div>
-                  <ThemeToggle />
-                </header>
+                <AppHeader />
                 <main className="flex-1 overflow-auto p-8 bg-background">
                   <div className="max-w-7xl mx-auto">
                     <Router />

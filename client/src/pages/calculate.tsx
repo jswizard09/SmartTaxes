@@ -34,6 +34,11 @@ export default function Calculate() {
     queryKey: ["/api/profile"],
   });
 
+  const { data: activeYear } = useQuery<{ year: number } | null>({
+    queryKey: ["/api/tax-config/active-year"],
+    enabled: !!localStorage.getItem("token"),
+  });
+
   const currentReturn = taxReturns?.[0];
 
   const { data: incomeBreakdown, isLoading: isLoadingBreakdown } = useQuery<IncomeBreakdown>({
@@ -102,7 +107,7 @@ export default function Calculate() {
           Tax Calculation
         </h1>
         <p className="text-lg text-muted-foreground">
-          Calculate your 2024 federal income tax based on uploaded documents.
+          Calculate your {activeYear?.year || new Date().getFullYear()} federal income tax based on uploaded documents.
         </p>
       </div>
 
