@@ -10,11 +10,14 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import Dashboard from "@/pages/dashboard";
+import Profile from "@/pages/profile";
 import Upload from "@/pages/upload";
 import Review from "@/pages/review";
 import Calculate from "@/pages/calculate";
 import Form1040Page from "@/pages/form1040";
 import ScheduleDPage from "@/pages/schedule-d";
+import Insights from "@/pages/insights";
+import File from "@/pages/file";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const token = localStorage.getItem("token");
@@ -31,6 +34,9 @@ function Router() {
       <Route path="/dashboard">
         {() => <ProtectedRoute component={Dashboard} />}
       </Route>
+      <Route path="/profile">
+        {() => <ProtectedRoute component={Profile} />}
+      </Route>
       <Route path="/upload">
         {() => <ProtectedRoute component={Upload} />}
       </Route>
@@ -45,6 +51,12 @@ function Router() {
       </Route>
       <Route path="/schedule-d">
         {() => <ProtectedRoute component={ScheduleDPage} />}
+      </Route>
+      <Route path="/insights">
+        {() => <ProtectedRoute component={Insights} />}
+      </Route>
+      <Route path="/file">
+        {() => <ProtectedRoute component={File} />}
       </Route>
       <Route path="/">
         <Redirect to="/login" />

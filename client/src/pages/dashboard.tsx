@@ -1,12 +1,16 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Upload, FileText, DollarSign, Calendar, ArrowRight, CheckCircle2, AlertCircle } from "lucide-react";
+import { Upload, FileText, DollarSign, Calendar, ArrowRight, CheckCircle2, AlertCircle, Lightbulb, Trash2 } from "lucide-react";
 import { Link } from "wouter";
+import { useState } from "react";
 import type { TaxReturn, Document } from "@shared/schema";
 
 export default function Dashboard() {
+  const queryClient = useQueryClient();
+  const [isClearing, setIsClearing] = useState(false);
+
   const { data: taxReturns, isLoading: returnsLoading } = useQuery<TaxReturn[]>({
     queryKey: ["/api/tax-returns"],
   });
@@ -14,6 +18,47 @@ export default function Dashboard() {
   const { data: documents, isLoading: docsLoading } = useQuery<Document[]>({
     queryKey: ["/api/documents"],
   });
+
+  const clearDocumentsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/admin/clear-documents", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error("Failed to clear documents");
+      }
+      
+      return response.json();
+    },
+    onSuccess: () => {
+      // Invalidate and refetch all queries
+      queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tax-returns"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/w2-data"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/1099-div-data"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/1099-int-data"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/1099-b-data"] });
+    },
+  });
+
+  const handleClearDocuments = async () => {
+    if (window.confirm("Are you sure you want to clear all documents? This action cannot be undone.")) {
+      setIsClearing(true);
+      try {
+        await clearDocumentsMutation.mutateAsync();
+        alert("All documents cleared successfully!");
+      } catch (error) {
+        alert("Failed to clear documents. Please try again.");
+      } finally {
+        setIsClearing(false);
+      }
+    }
+  };
 
   const currentReturn = taxReturns?.[0];
   const documentCount = documents?.length || 0;
@@ -109,6 +154,22 @@ export default function Dashboard() {
               <Button className="w-full justify-start gap-3" variant="outline" data-testid="button-calculate">
                 <DollarSign className="h-5 w-5" />
                 <span>Calculate Taxes</span>
+                <ArrowRight className="h-4 w-4 ml-auto" />
+              </Button>
+            </Link>
+
+            <Link href="/insights">
+              <Button className="w-full justify-start gap-3" variant="outline" data-testid="button-insights">
+                <Lightbulb className="h-5 w-5" />
+                <span>AI Tax Insights</span>
+                <ArrowRight className="h-4 w-4 ml-auto" />
+              </Button>
+            </Link>
+
+            <Link href="/file">
+              <Button className="w-full justify-start gap-3" variant="outline" data-testid="button-file">
+                <FileText className="h-5 w-5" />
+                <span>File Tax Return</span>
                 <ArrowRight className="h-4 w-4 ml-auto" />
               </Button>
             </Link>
@@ -216,6 +277,39 @@ export default function Dashboard() {
                   Generate your tax calculations and Form 1040
                 </p>
               </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Temporary Admin Section for Development */}
+      <Card className="border-destructive/20 bg-destructive/5">
+        <CardHeader>
+          <CardTitle className="text-destructive">Development Tools</CardTitle>
+          <CardDescription>
+            Temporary admin functions for development and testing
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+              <div className="flex items-center gap-3">
+                <Trash2 className="h-5 w-5 text-destructive" />
+                <div>
+                  <p className="text-sm font-medium">Clear All Documents</p>
+                  <p className="text-xs text-muted-foreground">
+                    Remove all uploaded documents and parsed data from database
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleClearDocuments}
+                disabled={isClearing || documentCount === 0}
+              >
+                {isClearing ? "Clearing..." : "Clear Documents"}
+              </Button>
             </div>
           </div>
         </CardContent>

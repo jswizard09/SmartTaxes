@@ -1,17 +1,28 @@
-import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Calculator, DollarSign, TrendingUp, TrendingDown, Loader2 } from "lucide-react";
-import type { TaxReturn } from "@shared/schema";
+import { Calculator, DollarSign, TrendingUp, TrendingDown, Loader2, User, AlertCircle } from "lucide-react";
+import type { TaxReturn, UserProfile } from "@shared/schema";
 import { FILING_STATUS } from "@shared/schema";
 
+interface IncomeBreakdown {
+  wages: number;
+  federalWithheld: number;
+  dividends: number;
+  qualifiedDividends: number;
+  interest: number;
+  capitalGains: number;
+  totalIncome: number;
+  w2Count: number;
+  divCount: number;
+  intCount: number;
+  bCount: number;
+}
+
 export default function Calculate() {
-  const [filingStatus, setFilingStatus] = useState<string>("single");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -19,9 +30,20 @@ export default function Calculate() {
     queryKey: ["/api/tax-returns"],
   });
 
+  const { data: profile, isLoading: isLoadingProfile } = useQuery<UserProfile>({
+    queryKey: ["/api/profile"],
+  });
+
+  const currentReturn = taxReturns?.[0];
+
+  const { data: incomeBreakdown, isLoading: isLoadingBreakdown } = useQuery<IncomeBreakdown>({
+    queryKey: [`/api/income-breakdown/${currentReturn?.id}`],
+    enabled: !!currentReturn?.id,
+  });
+
   const calculateMutation = useMutation({
-    mutationFn: async (status: string) => {
-      const response = await apiRequest("POST", "/api/calculate", { filingStatus: status });
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/calculate", {});
       return response.json();
     },
     onSuccess: () => {
@@ -31,6 +53,9 @@ export default function Calculate() {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/tax-returns"] });
       queryClient.invalidateQueries({ queryKey: ["/api/form1040"] });
+      if (currentReturn?.id) {
+        queryClient.invalidateQueries({ queryKey: [`/api/income-breakdown/${currentReturn.id}`] });
+      }
     },
     onError: (error: any) => {
       toast({
@@ -41,8 +66,6 @@ export default function Calculate() {
     },
   });
 
-  const currentReturn = taxReturns?.[0];
-
   const formatCurrency = (value: string | null | undefined) => {
     if (!value) return "$0.00";
     return `$${parseFloat(value).toLocaleString("en-US", {
@@ -51,8 +74,25 @@ export default function Calculate() {
     })}`;
   };
 
+  const formatFilingStatus = (status: string) => {
+    switch (status) {
+      case FILING_STATUS.SINGLE:
+        return "Single";
+      case FILING_STATUS.MARRIED_JOINT:
+        return "Married Filing Jointly";
+      case FILING_STATUS.MARRIED_SEPARATE:
+        return "Married Filing Separately";
+      case FILING_STATUS.HEAD_OF_HOUSEHOLD:
+        return "Head of Household";
+      case FILING_STATUS.QUALIFYING_WIDOW:
+        return "Qualifying Widow(er)";
+      default:
+        return "Single";
+    }
+  };
+
   const handleCalculate = () => {
-    calculateMutation.mutate(filingStatus);
+    calculateMutation.mutate();
   };
 
   return (
@@ -70,28 +110,66 @@ export default function Calculate() {
         <CardHeader>
           <CardTitle>Filing Information</CardTitle>
           <CardDescription>
-            Select your filing status to calculate taxes
+            Your tax calculation will use the filing status from your profile
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="space-y-2">
-            <Label htmlFor="filing-status">Filing Status</Label>
-            <Select value={filingStatus} onValueChange={setFilingStatus}>
-              <SelectTrigger id="filing-status" data-testid="select-filing-status">
-                <SelectValue placeholder="Select filing status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={FILING_STATUS.SINGLE}>Single</SelectItem>
-                <SelectItem value={FILING_STATUS.MARRIED_JOINT}>Married Filing Jointly</SelectItem>
-                <SelectItem value={FILING_STATUS.MARRIED_SEPARATE}>Married Filing Separately</SelectItem>
-                <SelectItem value={FILING_STATUS.HEAD_OF_HOUSEHOLD}>Head of Household</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {isLoadingProfile ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : profile ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-4 bg-accent/50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <User className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <p className="font-medium text-foreground">Filing Status</p>
+                    <p className="text-sm text-muted-foreground">
+                      {profile.firstName && profile.lastName 
+                        ? `${profile.firstName} ${profile.lastName}` 
+                        : "Taxpayer"
+                      }
+                    </p>
+                  </div>
+                </div>
+                <Badge variant="secondary" className="text-sm">
+                  {formatFilingStatus(profile.filingStatus)}
+                </Badge>
+              </div>
+              
+              {profile.dependents && Array.isArray(profile.dependents) && profile.dependents.length > 0 ? (
+                <div className="flex items-center justify-between p-4 bg-accent/50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <User className="h-5 w-5 text-muted-foreground" />
+                    <div>
+                      <p className="font-medium text-foreground">Dependents</p>
+                      <p className="text-sm text-muted-foreground">
+                        {profile.dependents.length} dependent{profile.dependents.length !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <Badge variant="outline" className="text-sm">
+                    {profile.dependents.filter((dep: any) => dep.isQualifyingChild).length} qualifying children
+                  </Badge>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+              <AlertCircle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+              <div>
+                <p className="font-medium text-yellow-800 dark:text-yellow-200">Profile Required</p>
+                <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                  Please complete your tax profile to calculate taxes accurately.
+                </p>
+              </div>
+            </div>
+          )}
 
           <Button
             onClick={handleCalculate}
-            disabled={calculateMutation.isPending}
+            disabled={calculateMutation.isPending || !profile}
             className="w-full"
             size="lg"
             data-testid="button-calculate"
@@ -181,48 +259,68 @@ export default function Calculate() {
               <CardDescription>Detailed breakdown of your income sources</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between py-3 border-b">
-                  <div>
-                    <p className="font-medium text-foreground">Wages and Salaries</p>
-                    <p className="text-sm text-muted-foreground">Form W-2</p>
+              {isLoadingBreakdown ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between py-3 border-b">
+                    <div>
+                      <p className="font-medium text-foreground">Wages and Salaries</p>
+                      <p className="text-sm text-muted-foreground">
+                        Form W-2 ({incomeBreakdown?.w2Count || 0} form{incomeBreakdown?.w2Count !== 1 ? 's' : ''})
+                      </p>
+                    </div>
+                    <p className="text-lg font-mono font-semibold">
+                      {formatCurrency(incomeBreakdown?.wages?.toString())}
+                    </p>
                   </div>
-                  <p className="text-lg font-mono font-semibold">
-                    {formatCurrency(currentReturn.totalIncome)}
-                  </p>
-                </div>
 
-                <div className="flex items-center justify-between py-3 border-b">
-                  <div>
-                    <p className="font-medium text-foreground">Interest Income</p>
-                    <p className="text-sm text-muted-foreground">Form 1099-INT</p>
+                  <div className="flex items-center justify-between py-3 border-b">
+                    <div>
+                      <p className="font-medium text-foreground">Interest Income</p>
+                      <p className="text-sm text-muted-foreground">
+                        Form 1099-INT ({incomeBreakdown?.intCount || 0} form{incomeBreakdown?.intCount !== 1 ? 's' : ''})
+                      </p>
+                    </div>
+                    <p className="text-lg font-mono font-semibold">
+                      {formatCurrency(incomeBreakdown?.interest?.toString())}
+                    </p>
                   </div>
-                  <p className="text-lg font-mono font-semibold">$0.00</p>
-                </div>
 
-                <div className="flex items-center justify-between py-3 border-b">
-                  <div>
-                    <p className="font-medium text-foreground">Dividend Income</p>
-                    <p className="text-sm text-muted-foreground">Form 1099-DIV</p>
+                  <div className="flex items-center justify-between py-3 border-b">
+                    <div>
+                      <p className="font-medium text-foreground">Dividend Income</p>
+                      <p className="text-sm text-muted-foreground">
+                        Form 1099-DIV ({incomeBreakdown?.divCount || 0} form{incomeBreakdown?.divCount !== 1 ? 's' : ''})
+                      </p>
+                    </div>
+                    <p className="text-lg font-mono font-semibold">
+                      {formatCurrency(incomeBreakdown?.dividends?.toString())}
+                    </p>
                   </div>
-                  <p className="text-lg font-mono font-semibold">$0.00</p>
-                </div>
 
-                <div className="flex items-center justify-between py-3 border-b">
-                  <div>
-                    <p className="font-medium text-foreground">Capital Gains</p>
-                    <p className="text-sm text-muted-foreground">Form 1099-B</p>
+                  <div className="flex items-center justify-between py-3 border-b">
+                    <div>
+                      <p className="font-medium text-foreground">Capital Gains</p>
+                      <p className="text-sm text-muted-foreground">
+                        Form 1099-B ({incomeBreakdown?.bCount || 0} form{incomeBreakdown?.bCount !== 1 ? 's' : ''})
+                      </p>
+                    </div>
+                    <p className="text-lg font-mono font-semibold">
+                      {formatCurrency(incomeBreakdown?.capitalGains?.toString())}
+                    </p>
                   </div>
-                  <p className="text-lg font-mono font-semibold">$0.00</p>
-                </div>
 
-                <div className="flex items-center justify-between py-4 bg-accent/50 px-4 rounded-lg mt-4">
-                  <p className="font-semibold text-foreground text-lg">Total Income</p>
-                  <p className="text-2xl font-mono font-bold">
-                    {formatCurrency(currentReturn.totalIncome)}
-                  </p>
+                  <div className="flex items-center justify-between py-4 bg-accent/50 px-4 rounded-lg mt-4">
+                    <p className="font-semibold text-foreground text-lg">Total Income</p>
+                    <p className="text-2xl font-mono font-bold">
+                      {formatCurrency(incomeBreakdown?.totalIncome?.toString())}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
 

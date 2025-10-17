@@ -25,7 +25,8 @@ export default function Upload() {
         formData.append("files", file);
       });
 
-      const response = await fetch("/api/upload", {
+      // Use enhanced upload endpoint for better parsing
+      const response = await fetch("/api/upload-enhanced", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
@@ -302,6 +303,33 @@ export default function Upload() {
                     >
                       {doc.documentType}
                     </Badge>
+                    
+                    {/* Parsing Method Badge */}
+                    {doc.parsingMethod && (
+                      <Badge variant="outline" className="text-xs">
+                        {doc.parsingMethod === "llm" ? "AI" : "Pattern"}
+                      </Badge>
+                    )}
+                    
+                    {/* Confidence Score */}
+                    {doc.confidenceScore && (
+                      <div className="flex items-center gap-1">
+                        <div className="w-16 bg-muted rounded-full h-2">
+                          <div 
+                            className={`h-2 rounded-full ${
+                              parseFloat(doc.confidenceScore) >= 0.8 ? "bg-green-500" :
+                              parseFloat(doc.confidenceScore) >= 0.6 ? "bg-yellow-500" :
+                              "bg-red-500"
+                            }`}
+                            style={{ width: `${parseFloat(doc.confidenceScore) * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {Math.round(parseFloat(doc.confidenceScore) * 100)}%
+                        </span>
+                      </div>
+                    )}
+                    
                     <Badge
                       variant={doc.status === "parsed" ? "default" : "secondary"}
                     >
