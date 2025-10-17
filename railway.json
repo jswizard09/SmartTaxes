@@ -1,0 +1,24 @@
+# Railway Configuration
+# This file is automatically detected by Railway
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+
+[env]
+NODE_ENV = "production"
+PORT = "5000"
+
+# Add these environment variables in Railway dashboard:
+# DATABASE_URL (from PostgreSQL service)
+# SESSION_SECRET (generate a secure random string)
+# JWT_SECRET (generate a secure random string)
+# OPENAI_API_KEY (your OpenAI API key)
+# ANTHROPIC_API_KEY (your Anthropic API key)
+# STRIPE_SECRET_KEY (your Stripe secret key)
+# STRIPE_PUBLISHABLE_KEY (your Stripe publishable key)

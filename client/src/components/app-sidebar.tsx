@@ -1,4 +1,4 @@
-import { Home, Upload, FileText, Calculator, ClipboardCheck, TrendingUp } from "lucide-react";
+import { Home, Upload, FileText, Calculator, ClipboardCheck, TrendingUp, Lightbulb, Send, User } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -17,6 +17,12 @@ const menuItems = [
     url: "/dashboard",
     icon: Home,
     testId: "link-dashboard",
+  },
+  {
+    title: "Profile",
+    url: "/profile",
+    icon: User,
+    testId: "link-profile",
   },
   {
     title: "Upload Documents",
@@ -47,6 +53,18 @@ const menuItems = [
     url: "/schedule-d",
     icon: TrendingUp,
     testId: "link-schedule-d",
+  },
+  {
+    title: "AI Insights",
+    url: "/insights",
+    icon: Lightbulb,
+    testId: "link-insights",
+  },
+  {
+    title: "File Return",
+    url: "/file",
+    icon: Send,
+    testId: "link-file",
   },
 ];
 
