@@ -8,6 +8,17 @@ import { useToast } from "@/hooks/use-toast";
 import { Upload as UploadIcon, FileText, X, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import type { Document } from "@shared/schema";
 
+interface DocumentSupportItem {
+  documentType: string;
+  category: "supported" | "limited" | "unsupported";
+  notes: string;
+}
+
+interface DocumentSupportResponse {
+  supported: DocumentSupportItem[];
+  unsupported: DocumentSupportItem[];
+}
+
 export default function Upload() {
   const [dragActive, setDragActive] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -16,6 +27,17 @@ export default function Upload() {
 
   const { data: documents, isLoading } = useQuery<Document[]>({
     queryKey: ["/api/documents"],
+  });
+
+  const { data: documentSupport } = useQuery<DocumentSupportResponse>({
+    queryKey: ["/api/document-support"],
+    queryFn: async () => {
+      const response = await fetch("/api/document-support", {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      if (!response.ok) throw new Error("Failed to load supported document types");
+      return response.json();
+    },
   });
 
   const uploadMutation = useMutation({
@@ -143,7 +165,7 @@ export default function Upload() {
       case "1099-B":
         return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200";
       default:
-        return "";
+        return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
     }
   };
 
@@ -251,6 +273,39 @@ export default function Upload() {
               </Button>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Current Document Support</CardTitle>
+          <CardDescription>
+            We automatically detect unsupported forms so they are not used in your return calculations.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div>
+              <h4 className="text-sm font-medium mb-2">Supported / Limited</h4>
+              <div className="flex flex-wrap gap-2">
+                {documentSupport?.supported?.map((item) => (
+                  <Badge key={item.documentType} variant={item.category === "supported" ? "default" : "secondary"}>
+                    {item.documentType}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium mb-2">Recognized but not yet supported</h4>
+              <div className="flex flex-wrap gap-2">
+                {documentSupport?.unsupported?.map((item) => (
+                  <Badge key={item.documentType} className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                    {item.documentType}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

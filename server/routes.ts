@@ -26,6 +26,7 @@ import { efileService } from "./services/efileService";
 import { stateTaxService } from "./services/stateTaxService";
 import { taxConfigService } from "./services/taxConfigService";
 import { subscriptionService, subscriptionMiddleware, requireFeature, checkDocumentLimit, SubscriptionRequest } from "./middleware/subscription";
+import { SUPPORTED_DOCUMENTS, COMMON_UNSUPPORTED_DOCUMENTS, UNSUPPORTED_1099_TYPES } from "@shared/documentSupport";
 import { eq } from "drizzle-orm";
 
 const upload = multer({ dest: "uploads/" });
@@ -1369,6 +1370,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/document-support", authenticateToken, async (_req: AuthRequest, res) => {
+    res.json({
+      supported: SUPPORTED_DOCUMENTS,
+      unsupported: COMMON_UNSUPPORTED_DOCUMENTS,
+    });
+  });
+
   app.get("/api/state-tax/deductions/:state", authenticateToken, async (req: AuthRequest, res) => {
     try {
       const { state } = req.params;
@@ -1429,6 +1437,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(`[Enhanced Parser] Extracted text length: ${text.length}`);
           const docType = detectDocumentType(text);
           console.log(`[Enhanced Parser] Detected document type: ${docType}`);
+
+          if (UNSUPPORTED_1099_TYPES.includes(docType as any)) {
+            const unsupportedMessage = `${docType} is recognized but not supported yet. This document will not be included in tax calculations.`;
+
+            await storage.updateDocument(document.id, {
+              documentType: docType,
+              status: "error",
+              parsedData: text,
+              rawTextContent: text,
+            });
+
+            uploadedDocs.push({
+              ...document,
+              documentType: docType,
+              status: "error",
+              parsingResult: {
+                success: false,
+                confidenceScore: 0,
+                method: "pattern",
+                extractedFields: [],
+                missingFields: [],
+                errorMessage: unsupportedMessage,
+              },
+            });
+
+            continue;
+          }
           
           // Use enhanced parsing service
           const parsingResult = await parsingService.parseDocument(text, docType, {
