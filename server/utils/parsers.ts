@@ -3,6 +3,7 @@ import { createReadStream, readFileSync } from "fs";
 import csvParser from "csv-parser";
 import { createWorker } from "tesseract.js";
 import { PDFParse } from 'pdf-parse';
+import { UNSUPPORTED_1099_TYPES } from "@shared/documentSupport";
 
 export interface ParsedW2 {
   employerName?: string;
@@ -185,6 +186,13 @@ export async function parseExcel(filePath: string): Promise<any[]> {
 
 export function detectDocumentType(text: string): string {
   const upperText = text.toUpperCase();
+
+  // Detect explicitly unsupported 1099 variants so we don't accidentally classify them as supported forms
+  for (const unsupportedType of UNSUPPORTED_1099_TYPES) {
+    if (upperText.includes(`FORM ${unsupportedType}`) || upperText.includes(unsupportedType)) {
+      return unsupportedType;
+    }
+  }
   
   // Consolidated brokerage statement detection (check this first to avoid false positives)
   if (upperText.includes("TAX REPORTING STATEMENT") ||
@@ -249,10 +257,6 @@ export function detectDocumentType(text: string): string {
   // Additional document types
   if (upperText.includes("FORM 1099-MISC") || upperText.includes("1099-MISC")) {
     return "1099-MISC";
-  }
-  
-  if (upperText.includes("FORM 1099-R") || upperText.includes("1099-R")) {
-    return "1099-R";
   }
   
   if (upperText.includes("FORM 1098") || upperText.includes("MORTGAGE INTEREST")) {
