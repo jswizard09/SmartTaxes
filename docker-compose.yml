@@ -47,11 +47,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: 5000
-      DATABASE_URL: postgresql://smarttaxes_user:smarttaxes_password@postgres:5432/smarttaxes
-      REDIS_URL: redis://redis:6379
-      SESSION_SECRET: your-super-secret-session-key-change-this-in-production
-      JWT_SECRET: your-super-secret-jwt-key-change-this-in-production
-      # Add your API keys here
+      DATABASE_URL: ${DATABASE_URL:-postgresql://smarttaxes_user:smarttaxes_password@postgres:5432/smarttaxes}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SESSION_SECRET: ${SESSION_SECRET}
+      JWT_SECRET: ${JWT_SECRET}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}

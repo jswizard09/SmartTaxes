@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { rateLimit } from "express-rate-limit";
 import { storage } from "./storage";
 import { authenticateToken, generateToken, type AuthRequest } from "./middleware/auth";
 import { insertUserSchema, loginSchema, FILING_STATUS } from "@shared/schema";
@@ -7,6 +8,20 @@ import bcrypt from "bcrypt";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+
+const ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "text/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.oasis.opendocument.spreadsheet",
+  "image/jpeg",
+  "image/png",
+  "image/tiff",
+  "image/webp",
+]);
+
+const MAX_FILE_SIZE_BYTES = parseInt(process.env.MAX_FILE_SIZE || "10485760", 10); // 10 MB default
 import {
   parsePDF,
   parseCSV,
@@ -28,7 +43,17 @@ import { taxConfigService } from "./services/taxConfigService";
 import { subscriptionService, subscriptionMiddleware, requireFeature, checkDocumentLimit, SubscriptionRequest } from "./middleware/subscription";
 import { eq } from "drizzle-orm";
 
-const upload = multer({ dest: "uploads/" });
+const upload = multer({
+  dest: "uploads/",
+  limits: { fileSize: MAX_FILE_SIZE_BYTES, files: 10 },
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type '${file.mimetype}' is not allowed`));
+    }
+  },
+});
 
 // Initialize tax configuration data on startup
 async function initializeTaxData() {
@@ -44,8 +69,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize tax configuration data
   await initializeTaxData();
 
+  // Health check (no auth required — used by load balancers and Docker)
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many requests, please try again later" },
+  });
+
   // Authentication routes
-  app.post("/api/auth/register", async (req, res) => {
+  app.post("/api/auth/register", authLimiter, async (req, res) => {
     try {
       const { username, password, email } = insertUserSchema.parse(req.body);
 
@@ -67,7 +105,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", authLimiter, async (req, res) => {
     try {
       const { username, password } = loginSchema.parse(req.body);
 
@@ -266,6 +304,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const doc = await storage.getDocument(req.params.id);
       if (!doc) {
         return res.status(404).json({ message: "Document not found" });
+      }
+
+      // Verify the document belongs to the requesting user
+      const taxReturn = await storage.getTaxReturn(doc.taxReturnId);
+      if (!taxReturn || taxReturn.userId !== req.userId) {
+        return res.status(403).json({ message: "Access denied" });
       }
 
       // Delete file from filesystem
@@ -548,19 +592,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/1099-b-entries/batch", authenticateToken, async (req: AuthRequest, res) => {
     try {
-      console.log("Batch update request received:", JSON.stringify(req.body, null, 2));
       const { updates } = req.body;
       const results = [];
-      
+
       for (const update of updates) {
-        console.log("Processing update:", JSON.stringify(update, null, 2));
-        
         // The update should have { id: "entryId", data: {...} } structure
         const entryId = update.id;
         const updateData = update.data;
-        
-        console.log("Entry ID:", entryId);
-        console.log("Update data:", JSON.stringify(updateData, null, 2));
         
         // Clean the update data - remove fields that shouldn't be updated
         const { id, form1099BId, ...cleanedData } = updateData;
@@ -1569,15 +1607,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Admin endpoint to clear all documents (temporary for development)
-  app.delete("/api/admin/clear-documents", authenticateToken, async (req: AuthRequest, res) => {
-    try {
-      await storage.clearAllDocuments();
-      res.json({ message: "All documents cleared successfully" });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message || "Failed to clear documents" });
-    }
-  });
+  // Admin endpoint to clear all documents (development only — disabled in production)
+  if (process.env.NODE_ENV !== "production") {
+    app.delete("/api/admin/clear-documents", authenticateToken, async (req: AuthRequest, res) => {
+      try {
+        await storage.clearAllDocuments();
+        res.json({ message: "All documents cleared successfully" });
+      } catch (error: any) {
+        res.status(500).json({ message: error.message || "Failed to clear documents" });
+      }
+    });
+  }
 
   // Tax Configuration API routes
   app.get("/api/tax-config/years", async (req, res) => {
@@ -1598,7 +1638,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/tax-config/set-active-year", async (req, res) => {
+  app.post("/api/tax-config/set-active-year", authenticateToken, async (req, res) => {
     try {
       const { year } = req.body;
       if (!year || typeof year !== 'number') {
@@ -1683,22 +1723,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/config", authenticateToken, async (req: AuthRequest, res) => {
-    try {
-      const { configKey, configValue, configType, description } = req.body;
-      
-      const config = await taxConfigService.setAppConfiguration({
-        configKey,
-        configValue,
-        configType,
-        description,
-      });
-      
-      res.json(config);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
+  // App config write is disabled in production; only available with explicit env flag
+  if (process.env.ALLOW_CONFIG_WRITE === "true" && process.env.NODE_ENV !== "production") {
+    app.post("/api/config", authenticateToken, async (req: AuthRequest, res) => {
+      try {
+        const { configKey, configValue, configType, description } = req.body;
+
+        const config = await taxConfigService.setAppConfiguration({
+          configKey,
+          configValue,
+          configType,
+          description,
+        });
+
+        res.json(config);
+      } catch (error: any) {
+        res.status(500).json({ message: error.message });
+      }
+    });
+  }
 
   const httpServer = createServer(app);
   return httpServer;

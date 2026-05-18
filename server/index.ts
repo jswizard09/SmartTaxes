@@ -1,11 +1,27 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
+if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET environment variable is required in production");
+  process.exit(1);
+}
+
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+    },
+  },
+}));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 
 app.use((req, res, next) => {
   const start = Date.now();
