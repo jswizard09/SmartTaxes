@@ -19,6 +19,9 @@ import Review from "@/pages/review";
 import Calculate from "@/pages/calculate";
 import Form1040Page from "@/pages/form1040";
 import ScheduleDPage from "@/pages/schedule-d";
+import ScheduleAPage from "@/pages/schedule-a";
+import ScheduleCPage from "@/pages/schedule-c";
+import TaxPlanningPage from "@/pages/tax-planning";
 import Insights from "@/pages/insights";
 import File from "@/pages/file";
 
@@ -55,6 +58,15 @@ function Router() {
       </Route>
       <Route path="/schedule-d">
         {() => <ProtectedRoute component={ScheduleDPage} />}
+      </Route>
+      <Route path="/schedule-a">
+        {() => <ProtectedRoute component={ScheduleAPage} />}
+      </Route>
+      <Route path="/schedule-c">
+        {() => <ProtectedRoute component={ScheduleCPage} />}
+      </Route>
+      <Route path="/tax-planning">
+        {() => <ProtectedRoute component={TaxPlanningPage} />}
       </Route>
       <Route path="/insights">
         {() => <ProtectedRoute component={Insights} />}

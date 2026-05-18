@@ -39,6 +39,14 @@ import {
   type InsertEfileSubmission,
   type StateTaxReturn,
   type InsertStateTaxReturn,
+  type ScheduleA,
+  type InsertScheduleA,
+  type ScheduleC,
+  type InsertScheduleC,
+  type AuditLog,
+  type InsertAuditLog,
+  type BackgroundJob,
+  type InsertBackgroundJob,
   type TaxYear,
   type InsertTaxYear,
   type FederalTaxBracket,
@@ -83,6 +91,10 @@ import {
   apiUsage,
   efileSubmissions,
   stateTaxReturns,
+  scheduleA,
+  scheduleC,
+  auditLogs,
+  backgroundJobs,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -194,6 +206,27 @@ export interface IStorage {
   createStateTaxReturn(data: InsertStateTaxReturn): Promise<StateTaxReturn>;
   getStateTaxReturnsByTaxReturnId(taxReturnId: string): Promise<StateTaxReturn[]>;
   updateStateTaxReturn(id: string, data: Partial<StateTaxReturn>): Promise<StateTaxReturn>;
+
+  // Schedule A methods
+  getScheduleAByTaxReturnId(taxReturnId: string): Promise<ScheduleA | undefined>;
+  createScheduleA(data: InsertScheduleA): Promise<ScheduleA>;
+  updateScheduleA(id: string, data: Partial<ScheduleA>): Promise<ScheduleA>;
+
+  // Schedule C methods
+  getSchedulesByTaxReturnId(taxReturnId: string): Promise<ScheduleC[]>;
+  createScheduleC(data: InsertScheduleC): Promise<ScheduleC>;
+  updateScheduleC(id: string, data: Partial<ScheduleC>): Promise<ScheduleC>;
+  deleteScheduleC(id: string): Promise<void>;
+
+  // Audit Log methods
+  createAuditLog(data: InsertAuditLog): Promise<AuditLog>;
+  getAuditLogsByUserId(userId: string, limit?: number): Promise<AuditLog[]>;
+
+  // Background Job methods
+  createBackgroundJob(data: InsertBackgroundJob): Promise<BackgroundJob>;
+  getNextPendingJob(): Promise<BackgroundJob | undefined>;
+  updateBackgroundJob(id: string, data: Partial<BackgroundJob>): Promise<BackgroundJob>;
+  getPendingJobCount(): Promise<number>;
 }
 
 export class MemStorage implements IStorage {
@@ -654,12 +687,22 @@ export class MemStorage implements IStorage {
       dividendIncome: insert1040.dividendIncome || null,
       qualifiedDividends: insert1040.qualifiedDividends || null,
       capitalGains: insert1040.capitalGains || null,
+      selfEmploymentIncome: insert1040.selfEmploymentIncome || null,
       totalIncome: insert1040.totalIncome || null,
       adjustments: insert1040.adjustments || null,
       adjustedGrossIncome: insert1040.adjustedGrossIncome || null,
+      useItemized: insert1040.useItemized ?? false,
       standardDeduction: insert1040.standardDeduction || null,
+      itemizedDeduction: insert1040.itemizedDeduction || null,
       taxableIncome: insert1040.taxableIncome || null,
       tax: insert1040.tax || null,
+      selfEmploymentTax: insert1040.selfEmploymentTax || null,
+      altMinimumTax: insert1040.altMinimumTax || null,
+      childTaxCredit: insert1040.childTaxCredit || null,
+      eitcCredit: insert1040.eitcCredit || null,
+      childCareCredit: insert1040.childCareCredit || null,
+      educationCredit: insert1040.educationCredit || null,
+      saverCredit: insert1040.saverCredit || null,
       credits: insert1040.credits || null,
       totalTax: insert1040.totalTax || null,
       federalWithheld: insert1040.federalWithheld || null,
@@ -978,6 +1021,86 @@ export class MemStorage implements IStorage {
     const updated = { ...existing, ...data };
     this.stateTaxReturns.set(id, updated);
     return updated;
+  }
+
+  // Schedule A — in-memory
+  private scheduleAMap: Map<string, ScheduleA> = new Map();
+  async getScheduleAByTaxReturnId(taxReturnId: string): Promise<ScheduleA | undefined> {
+    return Array.from(this.scheduleAMap.values()).find(s => s.taxReturnId === taxReturnId);
+  }
+  async createScheduleA(data: InsertScheduleA): Promise<ScheduleA> {
+    const id = randomUUID();
+    const row = { id, ...data, createdAt: new Date(), updatedAt: new Date() } as ScheduleA;
+    this.scheduleAMap.set(id, row);
+    return row;
+  }
+  async updateScheduleA(id: string, data: Partial<ScheduleA>): Promise<ScheduleA> {
+    const existing = this.scheduleAMap.get(id);
+    if (!existing) throw new Error("Schedule A not found");
+    const updated = { ...existing, ...data, updatedAt: new Date() };
+    this.scheduleAMap.set(id, updated);
+    return updated;
+  }
+
+  // Schedule C — in-memory
+  private scheduleCMap: Map<string, ScheduleC> = new Map();
+  async getSchedulesByTaxReturnId(taxReturnId: string): Promise<ScheduleC[]> {
+    return Array.from(this.scheduleCMap.values()).filter(s => s.taxReturnId === taxReturnId);
+  }
+  async createScheduleC(data: InsertScheduleC): Promise<ScheduleC> {
+    const id = randomUUID();
+    const row = { id, ...data, createdAt: new Date(), updatedAt: new Date() } as ScheduleC;
+    this.scheduleCMap.set(id, row);
+    return row;
+  }
+  async updateScheduleC(id: string, data: Partial<ScheduleC>): Promise<ScheduleC> {
+    const existing = this.scheduleCMap.get(id);
+    if (!existing) throw new Error("Schedule C not found");
+    const updated = { ...existing, ...data, updatedAt: new Date() };
+    this.scheduleCMap.set(id, updated);
+    return updated;
+  }
+  async deleteScheduleC(id: string): Promise<void> {
+    this.scheduleCMap.delete(id);
+  }
+
+  // Audit Logs — in-memory
+  private auditLogMap: Map<string, AuditLog> = new Map();
+  async createAuditLog(data: InsertAuditLog): Promise<AuditLog> {
+    const id = randomUUID();
+    const row = { id, ...data, createdAt: new Date() } as AuditLog;
+    this.auditLogMap.set(id, row);
+    return row;
+  }
+  async getAuditLogsByUserId(userId: string, limit = 100): Promise<AuditLog[]> {
+    return Array.from(this.auditLogMap.values())
+      .filter(l => l.userId === userId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit);
+  }
+
+  // Background Jobs — in-memory
+  private jobMap: Map<string, BackgroundJob> = new Map();
+  async createBackgroundJob(data: InsertBackgroundJob): Promise<BackgroundJob> {
+    const id = randomUUID();
+    const row = { id, ...data, createdAt: new Date() } as BackgroundJob;
+    this.jobMap.set(id, row);
+    return row;
+  }
+  async getNextPendingJob(): Promise<BackgroundJob | undefined> {
+    return Array.from(this.jobMap.values())
+      .filter(j => j.status === "pending" && j.attempts < j.maxAttempts)
+      .sort((a, b) => a.priority - b.priority || a.scheduledAt.getTime() - b.scheduledAt.getTime())[0];
+  }
+  async updateBackgroundJob(id: string, data: Partial<BackgroundJob>): Promise<BackgroundJob> {
+    const existing = this.jobMap.get(id);
+    if (!existing) throw new Error("Job not found");
+    const updated = { ...existing, ...data };
+    this.jobMap.set(id, updated);
+    return updated;
+  }
+  async getPendingJobCount(): Promise<number> {
+    return Array.from(this.jobMap.values()).filter(j => j.status === "pending").length;
   }
 }
 
@@ -1478,11 +1601,84 @@ export class DbStorage implements IStorage {
       .where(eq(stateTaxReturns.id, id))
       .returning();
 
-    if (result.length === 0) {
-      throw new Error("State Tax Return not found");
-    }
-
+    if (result.length === 0) throw new Error("State Tax Return not found");
     return result[0];
+  }
+
+  // Schedule A methods
+  async getScheduleAByTaxReturnId(taxReturnId: string): Promise<ScheduleA | undefined> {
+    const result = await this.db.select().from(scheduleA).where(eq(scheduleA.taxReturnId, taxReturnId)).limit(1);
+    return result[0];
+  }
+
+  async createScheduleA(data: InsertScheduleA): Promise<ScheduleA> {
+    const result = await this.db.insert(scheduleA).values(data).returning();
+    return result[0];
+  }
+
+  async updateScheduleA(id: string, data: Partial<ScheduleA>): Promise<ScheduleA> {
+    const result = await this.db.update(scheduleA).set({ ...data, updatedAt: new Date() }).where(eq(scheduleA.id, id)).returning();
+    if (result.length === 0) throw new Error("Schedule A not found");
+    return result[0];
+  }
+
+  // Schedule C methods
+  async getSchedulesByTaxReturnId(taxReturnId: string): Promise<ScheduleC[]> {
+    return await this.db.select().from(scheduleC).where(eq(scheduleC.taxReturnId, taxReturnId));
+  }
+
+  async createScheduleC(data: InsertScheduleC): Promise<ScheduleC> {
+    const result = await this.db.insert(scheduleC).values(data).returning();
+    return result[0];
+  }
+
+  async updateScheduleC(id: string, data: Partial<ScheduleC>): Promise<ScheduleC> {
+    const result = await this.db.update(scheduleC).set({ ...data, updatedAt: new Date() }).where(eq(scheduleC.id, id)).returning();
+    if (result.length === 0) throw new Error("Schedule C not found");
+    return result[0];
+  }
+
+  async deleteScheduleC(id: string): Promise<void> {
+    await this.db.delete(scheduleC).where(eq(scheduleC.id, id));
+  }
+
+  // Audit Log methods
+  async createAuditLog(data: InsertAuditLog): Promise<AuditLog> {
+    const result = await this.db.insert(auditLogs).values(data).returning();
+    return result[0];
+  }
+
+  async getAuditLogsByUserId(userId: string, limit = 100): Promise<AuditLog[]> {
+    const { desc } = await import("drizzle-orm");
+    return await this.db.select().from(auditLogs).where(eq(auditLogs.userId, userId)).orderBy(desc(auditLogs.createdAt)).limit(limit);
+  }
+
+  // Background Job methods
+  async createBackgroundJob(data: InsertBackgroundJob): Promise<BackgroundJob> {
+    const result = await this.db.insert(backgroundJobs).values(data).returning();
+    return result[0];
+  }
+
+  async getNextPendingJob(): Promise<BackgroundJob | undefined> {
+    const { asc, lt } = await import("drizzle-orm");
+    const result = await this.db
+      .select()
+      .from(backgroundJobs)
+      .where(and(eq(backgroundJobs.status, "pending"), lt(backgroundJobs.attempts, backgroundJobs.maxAttempts)))
+      .orderBy(asc(backgroundJobs.priority), asc(backgroundJobs.scheduledAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateBackgroundJob(id: string, data: Partial<BackgroundJob>): Promise<BackgroundJob> {
+    const result = await this.db.update(backgroundJobs).set(data).where(eq(backgroundJobs.id, id)).returning();
+    if (result.length === 0) throw new Error("Background job not found");
+    return result[0];
+  }
+
+  async getPendingJobCount(): Promise<number> {
+    const result = await this.db.select().from(backgroundJobs).where(eq(backgroundJobs.status, "pending"));
+    return result.length;
   }
 }
 

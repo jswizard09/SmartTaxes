@@ -152,12 +152,25 @@ export const form1040 = pgTable("form_1040", {
   dividendIncome: decimal("dividend_income", { precision: 12, scale: 2 }),
   qualifiedDividends: decimal("qualified_dividends", { precision: 12, scale: 2 }),
   capitalGains: decimal("capital_gains", { precision: 12, scale: 2 }),
+  selfEmploymentIncome: decimal("self_employment_income", { precision: 12, scale: 2 }),
   totalIncome: decimal("total_income", { precision: 12, scale: 2 }),
   adjustments: decimal("adjustments", { precision: 12, scale: 2 }),
   adjustedGrossIncome: decimal("adjusted_gross_income", { precision: 12, scale: 2 }),
+  // Deductions
+  useItemized: boolean("use_itemized").default(false),
   standardDeduction: decimal("standard_deduction", { precision: 12, scale: 2 }),
+  itemizedDeduction: decimal("itemized_deduction", { precision: 12, scale: 2 }),
   taxableIncome: decimal("taxable_income", { precision: 12, scale: 2 }),
+  // Tax before credits
   tax: decimal("tax", { precision: 12, scale: 2 }),
+  selfEmploymentTax: decimal("self_employment_tax", { precision: 12, scale: 2 }),
+  altMinimumTax: decimal("alt_minimum_tax", { precision: 12, scale: 2 }),
+  // Credits
+  childTaxCredit: decimal("child_tax_credit", { precision: 12, scale: 2 }),
+  eitcCredit: decimal("eitc_credit", { precision: 12, scale: 2 }),
+  childCareCredit: decimal("child_care_credit", { precision: 12, scale: 2 }),
+  educationCredit: decimal("education_credit", { precision: 12, scale: 2 }),
+  saverCredit: decimal("saver_credit", { precision: 12, scale: 2 }),
   credits: decimal("credits", { precision: 12, scale: 2 }),
   totalTax: decimal("total_tax", { precision: 12, scale: 2 }),
   federalWithheld: decimal("federal_withheld", { precision: 12, scale: 2 }),
@@ -566,6 +579,148 @@ export const SUBSCRIPTION_STATUS = {
   CANCELLED: "cancelled",
   EXPIRED: "expired",
 } as const;
+
+// ─── Schedule A — Itemized Deductions ───────────────────────────────────────
+export const scheduleA = pgTable("schedule_a", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxReturnId: varchar("tax_return_id").notNull().references(() => taxReturns.id),
+  // Medical & Dental
+  medicalExpenses: decimal("medical_expenses", { precision: 12, scale: 2 }).default("0"),
+  // Taxes Paid
+  stateLocalIncomeTax: decimal("state_local_income_tax", { precision: 12, scale: 2 }).default("0"),
+  realEstateTax: decimal("real_estate_tax", { precision: 12, scale: 2 }).default("0"),
+  personalPropertyTax: decimal("personal_property_tax", { precision: 12, scale: 2 }).default("0"),
+  // Interest Paid
+  mortgageInterest: decimal("mortgage_interest", { precision: 12, scale: 2 }).default("0"),
+  mortgagePoints: decimal("mortgage_points", { precision: 12, scale: 2 }).default("0"),
+  investmentInterest: decimal("investment_interest", { precision: 12, scale: 2 }).default("0"),
+  // Gifts to Charity
+  charitableCash: decimal("charitable_cash", { precision: 12, scale: 2 }).default("0"),
+  charitableNonCash: decimal("charitable_non_cash", { precision: 12, scale: 2 }).default("0"),
+  // Casualty & Theft (Disaster only)
+  casualtyLoss: decimal("casualty_loss", { precision: 12, scale: 2 }).default("0"),
+  // Other
+  otherDeductions: decimal("other_deductions", { precision: 12, scale: 2 }).default("0"),
+  // Computed totals
+  totalItemizedDeductions: decimal("total_itemized_deductions", { precision: 12, scale: 2 }).default("0"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// ─── Schedule C — Profit or Loss from Business ──────────────────────────────
+export const scheduleC = pgTable("schedule_c", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxReturnId: varchar("tax_return_id").notNull().references(() => taxReturns.id),
+  businessName: text("business_name"),
+  ein: text("ein"),
+  businessCode: text("business_code"), // 6-digit NAICS code
+  accountingMethod: text("accounting_method").default("cash"), // cash or accrual
+  // Part I – Income
+  grossReceipts: decimal("gross_receipts", { precision: 12, scale: 2 }).default("0"),
+  returns: decimal("returns", { precision: 12, scale: 2 }).default("0"),
+  otherIncome: decimal("other_income", { precision: 12, scale: 2 }).default("0"),
+  grossIncome: decimal("gross_income", { precision: 12, scale: 2 }).default("0"),
+  // Part II – Expenses
+  advertising: decimal("advertising", { precision: 12, scale: 2 }).default("0"),
+  carTruck: decimal("car_truck", { precision: 12, scale: 2 }).default("0"),
+  commissions: decimal("commissions", { precision: 12, scale: 2 }).default("0"),
+  contractLabor: decimal("contract_labor", { precision: 12, scale: 2 }).default("0"),
+  depletion: decimal("depletion", { precision: 12, scale: 2 }).default("0"),
+  depreciation: decimal("depreciation", { precision: 12, scale: 2 }).default("0"),
+  insurance: decimal("insurance", { precision: 12, scale: 2 }).default("0"),
+  mortgageInterest: decimal("mortgage_interest", { precision: 12, scale: 2 }).default("0"),
+  otherInterest: decimal("other_interest", { precision: 12, scale: 2 }).default("0"),
+  legalProfessional: decimal("legal_professional", { precision: 12, scale: 2 }).default("0"),
+  officeExpenses: decimal("office_expenses", { precision: 12, scale: 2 }).default("0"),
+  pensionProfitSharing: decimal("pension_profit_sharing", { precision: 12, scale: 2 }).default("0"),
+  rentLeaseMachinery: decimal("rent_lease_machinery", { precision: 12, scale: 2 }).default("0"),
+  rentLeaseOther: decimal("rent_lease_other", { precision: 12, scale: 2 }).default("0"),
+  repairsMaintenance: decimal("repairs_maintenance", { precision: 12, scale: 2 }).default("0"),
+  supplies: decimal("supplies", { precision: 12, scale: 2 }).default("0"),
+  taxesLicenses: decimal("taxes_licenses", { precision: 12, scale: 2 }).default("0"),
+  travel: decimal("travel", { precision: 12, scale: 2 }).default("0"),
+  mealsEntertainment: decimal("meals_entertainment", { precision: 12, scale: 2 }).default("0"),
+  utilities: decimal("utilities", { precision: 12, scale: 2 }).default("0"),
+  wages: decimal("wages", { precision: 12, scale: 2 }).default("0"),
+  otherExpenses: decimal("other_expenses", { precision: 12, scale: 2 }).default("0"),
+  homeOfficeDeduction: decimal("home_office_deduction", { precision: 12, scale: 2 }).default("0"),
+  totalExpenses: decimal("total_expenses", { precision: 12, scale: 2 }).default("0"),
+  // Part III / IV
+  costOfGoodsSold: decimal("cost_of_goods_sold", { precision: 12, scale: 2 }).default("0"),
+  // Computed
+  netProfit: decimal("net_profit", { precision: 12, scale: 2 }).default("0"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// ─── Audit Logs ─────────────────────────────────────────────────────────────
+export const auditLogs = pgTable("audit_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  action: text("action").notNull(), // "login", "upload", "delete", "update", "export", "calculate"
+  resourceType: text("resource_type"), // "document", "tax_return", "form_1040", etc.
+  resourceId: varchar("resource_id"),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  metadata: jsonb("metadata"), // additional context
+  success: boolean("success").notNull().default(true),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── Background Jobs ─────────────────────────────────────────────────────────
+export const backgroundJobs = pgTable("background_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: text("type").notNull(), // "parse_document", "generate_insights", "calculate_taxes"
+  payload: jsonb("payload").notNull(),
+  status: text("status").notNull().default("pending"), // "pending", "running", "completed", "failed"
+  priority: integer("priority").notNull().default(0),
+  attempts: integer("attempts").notNull().default(0),
+  maxAttempts: integer("max_attempts").notNull().default(3),
+  result: jsonb("result"),
+  errorMessage: text("error_message"),
+  scheduledAt: timestamp("scheduled_at").defaultNow().notNull(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  failedAt: timestamp("failed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ─── Insert schemas ──────────────────────────────────────────────────────────
+export const insertScheduleASchema = createInsertSchema(scheduleA).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertScheduleCSchema = createInsertSchema(scheduleC).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertBackgroundJobSchema = createInsertSchema(backgroundJobs).omit({
+  id: true,
+  createdAt: true,
+});
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+export type ScheduleA = typeof scheduleA.$inferSelect;
+export type InsertScheduleA = z.infer<typeof insertScheduleASchema>;
+
+export type ScheduleC = typeof scheduleC.$inferSelect;
+export type InsertScheduleC = z.infer<typeof insertScheduleCSchema>;
+
+export type AuditLog = typeof auditLogs.$inferSelect;
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+
+export type BackgroundJob = typeof backgroundJobs.$inferSelect;
+export type InsertBackgroundJob = z.infer<typeof insertBackgroundJobSchema>;
 
 export const EFILE_STATUS = {
   PENDING: "pending",

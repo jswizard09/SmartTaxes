@@ -69,8 +69,16 @@ export default function Insights() {
 
   const updateInsightMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      // This would typically call an API to update the insight status
-      console.log(`Updating insight ${id} to ${status}`);
+      const response = await fetch(`/api/ai/insights/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) throw new Error('Failed to update insight');
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/ai/insights"] });

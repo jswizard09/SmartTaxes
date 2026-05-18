@@ -24,6 +24,7 @@
     "health": "curl -f http://localhost:5000/api/health || echo 'Application not running'"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@neondatabase/serverless": "^0.10.4",

@@ -718,14 +718,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get user profile for filing status and other tax-relevant info
       const profile = await storage.getUserProfile(req.userId!);
       const filingStatus = req.body.filingStatus || profile?.filingStatus || "single";
-      
+      const isMfj = filingStatus === "married_joint";
+
       const activeYear = await taxConfigService.getActiveTaxYear();
       if (!activeYear) {
         return res.status(404).json({ message: "No active tax year found" });
       }
 
       const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
-      
+
       if (taxReturns.length === 0) {
         return res.status(404).json({ message: "No tax return found" });
       }
@@ -738,16 +739,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const intData = await storage.get1099IntByTaxReturnId(taxReturn.id);
       const bData = await storage.get1099BByTaxReturnId(taxReturn.id);
 
+      // Schedule C — self-employment income
+      const scheduleCEntries = await storage.getSchedulesByTaxReturnId(taxReturn.id);
+      const totalScheduleCNetProfit = scheduleCEntries.reduce(
+        (sum, sc) => sum + parseFloat(sc.netProfit || "0"),
+        0
+      );
+
       // Calculate total income
       const totalWages = w2Data.reduce((sum, w2) => sum + parseFloat(w2.wages || "0"), 0);
       const totalFederalWithheld = w2Data.reduce((sum, w2) => sum + parseFloat(w2.federalWithheld || "0"), 0);
       const totalDividends = divData.reduce((sum, div) => sum + parseFloat(div.ordinaryDividends || "0"), 0);
       const totalQualifiedDividends = divData.reduce((sum, div) => sum + parseFloat(div.qualifiedDividends || "0"), 0);
       const totalInterest = intData.reduce((sum, int) => sum + parseFloat(int.interestIncome || "0"), 0);
-      const totalCapitalGains = bData.reduce((sum, b) => sum + parseFloat(b.shortTermGainLoss || "0") + parseFloat(b.longTermGainLoss || "0"), 0);
+      const totalCapitalGains = bData.reduce(
+        (sum, b) => sum + parseFloat(b.shortTermGainLoss || "0") + parseFloat(b.longTermGainLoss || "0"),
+        0
+      );
 
-      const totalIncome = totalWages + totalDividends + totalInterest + totalCapitalGains;
-      
+      // Self-employment tax (Schedule SE): 15.3% on net SE income up to SS wage base; simplified
+      const selfEmploymentTax =
+        totalScheduleCNetProfit > 0 ? totalScheduleCNetProfit * 0.9235 * 0.153 : 0;
+      // SE tax deduction: half of SE tax reduces AGI
+      const seTaxDeduction = selfEmploymentTax / 2;
+
+      const totalIncome =
+        totalWages + totalDividends + totalInterest + totalCapitalGains + totalScheduleCNetProfit;
+
       // Get tax calculation data from database
       const taxYear = await taxConfigService.getActiveTaxYear();
       if (!taxYear) {
@@ -755,10 +773,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const taxData = await taxConfigService.getTaxCalculationData(taxYear.year, filingStatus);
-      
+
       // Standard deduction - consider additional deductions for blind/disabled
-      let standardDeduction = taxData.federalStandardDeduction ? Number(taxData.federalStandardDeduction.amount) : 0;
-      
+      let standardDeduction = taxData.federalStandardDeduction
+        ? Number(taxData.federalStandardDeduction.amount)
+        : 0;
+
       // Additional standard deduction for blind/disabled taxpayers
       if (profile?.isBlind && taxData.federalStandardDeduction) {
         standardDeduction += Number(taxData.federalStandardDeduction.additionalBlindAmount || 0);
@@ -770,9 +790,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Veterans may qualify for additional deductions - this would need more specific logic
         // For now, we'll just note it in the response
       }
-      
+
       // For married filing jointly, consider spouse's additional deductions
-      if ((filingStatus === "married_joint" || filingStatus === "married_separate") && profile && taxData.federalStandardDeduction) {
+      if (
+        (filingStatus === "married_joint" || filingStatus === "married_separate") &&
+        profile &&
+        taxData.federalStandardDeduction
+      ) {
         if (profile.isSpouseBlind) {
           standardDeduction += Number(taxData.federalStandardDeduction.additionalBlindAmount || 0);
         }
@@ -783,40 +807,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Additional spouse veteran deductions
         }
       }
-      
+
+      // AGI = total income minus SE tax deduction
+      const adjustedGrossIncome = totalIncome - seTaxDeduction;
+
+      // Itemized deduction from Schedule A (if it exists)
+      const scheduleA = await storage.getScheduleAByTaxReturnId(taxReturn.id);
+      const itemizedDeduction = scheduleA
+        ? parseFloat(scheduleA.totalItemizedDeductions || "0")
+        : 0;
+
+      // Pick whichever deduction is larger
+      const useItemized = itemizedDeduction > standardDeduction;
+      const chosenDeduction = useItemized ? itemizedDeduction : standardDeduction;
+
       // Calculate dependent-related deductions and credits
-      let childTaxCredit = 0;
       let dependentDeduction = 0;
-      
+      const qualifyingChildren: any[] = [];
+
       if (profile?.dependents && Array.isArray(profile.dependents)) {
-        const qualifyingChildren = profile.dependents.filter(dep => dep.isQualifyingChild);
-        const qualifyingRelatives = profile.dependents.filter(dep => dep.isQualifyingRelative);
-        
-        // Child Tax Credit calculation
-        childTaxCredit = qualifyingChildren.length * 2000; // This should also be dynamic per year
-        
-        // Additional Child Tax Credit for children under 17 (simplified calculation)
-        const childrenUnder17 = qualifyingChildren.filter(dep => {
-          const birthYear = new Date(dep.dateOfBirth).getFullYear();
-          const currentYear = taxYear.year;
-          return (currentYear - birthYear) < 17;
-        });
-        childTaxCredit += childrenUnder17.length * 2000; // Additional $2,000 per child under 17
-        
-        // Dependent deduction (simplified - in reality this affects AGI)
-        dependentDeduction = (qualifyingChildren.length + qualifyingRelatives.length) * 500; // Simplified dependent deduction
+        const qChildren = profile.dependents.filter((dep: any) => dep.isQualifyingChild);
+        const qualifyingRelatives = profile.dependents.filter((dep: any) => dep.isQualifyingRelative);
+        qualifyingChildren.push(...qChildren);
+        dependentDeduction =
+          (qChildren.length + qualifyingRelatives.length) * 500;
       }
-      
+
       // Calculate taxable income
-      const adjustedGrossIncome = totalIncome;
-      const taxableIncome = Math.max(0, adjustedGrossIncome - standardDeduction - dependentDeduction);
-      
+      const taxableIncome = Math.max(0, adjustedGrossIncome - chosenDeduction - dependentDeduction);
+
       // Calculate tax using database brackets
       const tax = await taxConfigService.calculateFederalTax(taxableIncome, filingStatus, taxYear.year);
-      
-      // Apply credits
-      const taxAfterCredits = Math.max(0, tax - childTaxCredit);
-      
+
+      // ── Inline credit calculations ──────────────────────────────────────
+
+      // Child Tax Credit: $2,000 per qualifying child, phase-out at $200K/$400K MFJ
+      const ctcPhaseoutThreshold = isMfj ? 400000 : 200000;
+      const ctcPhaseoutExcess = Math.max(0, adjustedGrossIncome - ctcPhaseoutThreshold);
+      const ctcPhaseoutReduction = Math.ceil(ctcPhaseoutExcess / 1000) * 50;
+      const childTaxCredit = Math.max(0, qualifyingChildren.length * 2000 - ctcPhaseoutReduction);
+
+      // EITC: simplified estimate
+      let eitcCredit = 0;
+      const numChildren = qualifyingChildren.length;
+      if (numChildren === 0 && adjustedGrossIncome < 17640) {
+        eitcCredit = Math.min(632, adjustedGrossIncome * 0.0765);
+      } else if (numChildren === 1 && adjustedGrossIncome < (isMfj ? 53120 : 46560)) {
+        eitcCredit = Math.min(4213, Math.max(0, 4213 - Math.max(0, adjustedGrossIncome - 21430) * 0.1598));
+      } else if (numChildren === 2 && adjustedGrossIncome < (isMfj ? 59478 : 52918)) {
+        eitcCredit = Math.min(6960, Math.max(0, 6960 - Math.max(0, adjustedGrossIncome - 21430) * 0.2106));
+      } else if (numChildren >= 3 && adjustedGrossIncome < (isMfj ? 63398 : 56838)) {
+        eitcCredit = Math.min(7830, Math.max(0, 7830 - Math.max(0, adjustedGrossIncome - 21430) * 0.2106));
+      }
+
+      // Child & Dependent Care Credit: 20–35% of up to $3K (1 child) / $6K (2+)
+      const careLimit = numChildren >= 2 ? 6000 : numChildren === 1 ? 3000 : 0;
+      const childCareCredit = adjustedGrossIncome < 43000 ? careLimit * 0.35 : careLimit * 0.20;
+
+      // Education credit: placeholder
+      const educationCredit = 0;
+
+      // Saver's Credit: simplified
+      const saverPhaseout = isMfj ? 76500 : 38250;
+      const saverCredit = adjustedGrossIncome < saverPhaseout ? Math.min(200, adjustedGrossIncome * 0.001) : 0;
+
+      const totalCredits = childTaxCredit + eitcCredit + childCareCredit + educationCredit + saverCredit;
+
+      // Apply credits (cannot reduce tax below 0)
+      const taxAfterCredits = Math.max(0, tax + selfEmploymentTax - totalCredits);
+
       // Calculate refund or owed
       const refundOrOwed = totalFederalWithheld - taxAfterCredits;
 
@@ -824,7 +883,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updated = await storage.updateTaxReturn(taxReturn.id, {
         filingStatus,
         totalIncome: totalIncome.toString(),
-        totalDeductions: (standardDeduction + dependentDeduction).toString(),
+        totalDeductions: (chosenDeduction + dependentDeduction).toString(),
         taxableIncome: taxableIncome.toString(),
         totalTax: taxAfterCredits.toString(),
         withheld: totalFederalWithheld.toString(),
@@ -834,7 +893,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create or update Form 1040
       const existing1040 = await storage.getForm1040ByTaxReturnId(taxReturn.id);
-      
+
       const form1040Data = {
         taxReturnId: taxReturn.id,
         wages: totalWages.toString(),
@@ -842,14 +901,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         dividendIncome: totalDividends.toString(),
         qualifiedDividends: totalQualifiedDividends.toString(),
         capitalGains: totalCapitalGains.toString(),
+        selfEmploymentIncome: totalScheduleCNetProfit.toString(),
         totalIncome: totalIncome.toString(),
-        adjustments: "0",
+        adjustments: seTaxDeduction.toString(),
         adjustedGrossIncome: adjustedGrossIncome.toString(),
         standardDeduction: standardDeduction.toString(),
+        useItemized,
+        itemizedDeduction: itemizedDeduction.toString(),
         taxableIncome: taxableIncome.toString(),
         tax: tax.toString(),
-        credits: "0",
-        totalTax: tax.toString(),
+        selfEmploymentTax: selfEmploymentTax.toString(),
+        childTaxCredit: childTaxCredit.toString(),
+        eitcCredit: Math.round(eitcCredit).toString(),
+        childCareCredit: Math.round(childCareCredit).toString(),
+        educationCredit: educationCredit.toString(),
+        saverCredit: Math.round(saverCredit).toString(),
+        credits: Math.round(totalCredits).toString(),
+        totalTax: taxAfterCredits.toString(),
         federalWithheld: totalFederalWithheld.toString(),
         refundOrOwed: refundOrOwed.toString(),
       };
@@ -865,8 +933,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         profileBasedCalculations: {
           filingStatus: profile?.filingStatus || filingStatus,
           standardDeduction,
+          itemizedDeduction,
+          useItemized,
+          chosenDeduction,
           dependentDeduction,
-          childTaxCredit,
+          selfEmploymentTax: Math.round(selfEmploymentTax),
+          childTaxCredit: Math.round(childTaxCredit),
+          eitcCredit: Math.round(eitcCredit),
+          childCareCredit: Math.round(childCareCredit),
+          educationCredit,
+          saverCredit: Math.round(saverCredit),
+          totalCredits: Math.round(totalCredits),
           additionalDeductions: {
             blind: profile?.isBlind ? 1850 : 0,
             disabled: profile?.isDisabled ? 1850 : 0,
@@ -877,10 +954,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
           dependents: {
             total: Array.isArray(profile?.dependents) ? profile.dependents.length : 0,
-            qualifyingChildren: Array.isArray(profile?.dependents) ? profile.dependents.filter((dep: any) => dep.isQualifyingChild).length : 0,
-            qualifyingRelatives: Array.isArray(profile?.dependents) ? profile.dependents.filter((dep: any) => dep.isQualifyingRelative).length : 0,
-          }
-        }
+            qualifyingChildren: qualifyingChildren.length,
+            qualifyingRelatives: Array.isArray(profile?.dependents)
+              ? profile.dependents.filter((dep: any) => dep.isQualifyingRelative).length
+              : 0,
+          },
+        },
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message || "Calculation failed" });
@@ -1742,6 +1821,381 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     });
   }
+
+  // ── Schedule A Routes ──────────────────────────────────────────────────────
+
+  app.get("/api/schedule-a", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+      const taxReturn = taxReturns[0];
+      let scheduleA = await storage.getScheduleAByTaxReturnId(taxReturn.id);
+      if (!scheduleA) {
+        scheduleA = await storage.createScheduleA({ taxReturnId: taxReturn.id });
+      }
+      res.json(scheduleA);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.put("/api/schedule-a", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+      const taxReturn = taxReturns[0];
+
+      // Get AGI from form 1040 for the medical floor calculation
+      const form1040 = await storage.getForm1040ByTaxReturnId(taxReturn.id);
+      const agi = parseFloat(form1040?.adjustedGrossIncome || "0");
+
+      const body = req.body;
+      const p = (field: string) => parseFloat(body[field] || "0");
+
+      // Medical: only amount above 7.5% of AGI is deductible
+      const medicalExpenses = p("medicalExpenses");
+      const medicalDeductible = Math.max(0, medicalExpenses - agi * 0.075);
+
+      // SALT cap: $10,000
+      const saltTotal = p("stateLocalIncomeTax") + p("realEstateTax") + p("personalPropertyTax");
+      const saltCap = Math.min(saltTotal, 10000);
+
+      const totalItemizedDeductions =
+        medicalDeductible +
+        saltCap +
+        p("mortgageInterest") +
+        p("mortgagePoints") +
+        p("investmentInterest") +
+        p("charitableCash") +
+        p("charitableNonCash") +
+        p("casualtyLoss") +
+        p("otherDeductions");
+
+      let scheduleA = await storage.getScheduleAByTaxReturnId(taxReturn.id);
+      const updateData = {
+        ...body,
+        totalItemizedDeductions: totalItemizedDeductions.toString(),
+      };
+
+      if (scheduleA) {
+        scheduleA = await storage.updateScheduleA(scheduleA.id, updateData);
+      } else {
+        scheduleA = await storage.createScheduleA({ taxReturnId: taxReturn.id, ...updateData });
+      }
+
+      res.json(scheduleA);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── Schedule C Routes ──────────────────────────────────────────────────────
+
+  app.get("/api/schedule-c", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
+      if (taxReturns.length === 0) {
+        return res.json([]);
+      }
+      const schedules = await storage.getSchedulesByTaxReturnId(taxReturns[0].id);
+      res.json(schedules);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/schedule-c", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+      const taxReturn = taxReturns[0];
+      const schedule = await storage.createScheduleC({ ...req.body, taxReturnId: taxReturn.id });
+      res.status(201).json(schedule);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.put("/api/schedule-c/:id", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+      // Verify ownership
+      const existing = (await storage.getSchedulesByTaxReturnId(taxReturns[0].id)).find(
+        (s) => s.id === req.params.id
+      );
+      if (!existing) {
+        return res.status(404).json({ message: "Schedule C not found" });
+      }
+
+      const body = req.body;
+      const p = (field: string) => parseFloat(body[field] ?? existing[field as keyof typeof existing] ?? "0");
+
+      // Gross income
+      const grossReceipts = p("grossReceipts");
+      const returns = p("returns");
+      const otherIncome = p("otherIncome");
+      const grossIncome = grossReceipts - returns + otherIncome;
+
+      // Total expenses — sum of all expense fields
+      const totalExpenses =
+        p("advertising") +
+        p("carTruck") +
+        p("commissions") +
+        p("contractLabor") +
+        p("depletion") +
+        p("depreciation") +
+        p("insurance") +
+        p("mortgageInterest") +
+        p("otherInterest") +
+        p("legalProfessional") +
+        p("officeExpenses") +
+        p("pensionProfitSharing") +
+        p("rentLeaseMachinery") +
+        p("rentLeaseOther") +
+        p("repairsMaintenance") +
+        p("supplies") +
+        p("taxesLicenses") +
+        p("travel") +
+        p("mealsEntertainment") +
+        p("utilities") +
+        p("wages") +
+        p("otherExpenses") +
+        p("homeOfficeDeduction");
+
+      const costOfGoodsSold = p("costOfGoodsSold");
+      const netProfit = grossIncome - totalExpenses - costOfGoodsSold;
+
+      const updated = await storage.updateScheduleC(req.params.id, {
+        ...body,
+        grossIncome: grossIncome.toString(),
+        totalExpenses: totalExpenses.toString(),
+        netProfit: netProfit.toString(),
+      });
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/schedule-c/:id", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+      // Verify ownership before deleting
+      const existing = (await storage.getSchedulesByTaxReturnId(taxReturns[0].id)).find(
+        (s) => s.id === req.params.id
+      );
+      if (!existing) {
+        return res.status(404).json({ message: "Schedule C not found" });
+      }
+      await storage.deleteScheduleC(req.params.id);
+      res.json({ message: "Schedule C deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── Credits Calculation Route ─────────────────────────────────────────────
+
+  app.get("/api/credits/calculate", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+      const taxReturn = taxReturns[0];
+      const form1040 = await storage.getForm1040ByTaxReturnId(taxReturn.id);
+      const profile = await storage.getUserProfile(req.userId!);
+
+      const agi = parseFloat(form1040?.adjustedGrossIncome || "0");
+      const filingStatus = taxReturn.filingStatus || "single";
+      const isMfj = filingStatus === "married_joint";
+
+      // Child Tax Credit: $2,000 per qualifying child, phase-out at $200K single / $400K MFJ
+      const qualifyingChildren: any[] = Array.isArray(profile?.dependents)
+        ? profile.dependents.filter((d: any) => d.isQualifyingChild)
+        : [];
+      const ctcPhaseoutThreshold = isMfj ? 400000 : 200000;
+      const ctcPhaseoutExcess = Math.max(0, agi - ctcPhaseoutThreshold);
+      const ctcPhaseoutReduction = Math.ceil(ctcPhaseoutExcess / 1000) * 50;
+      const ctcBeforePhaseout = qualifyingChildren.length * 2000;
+      const childTaxCredit = Math.max(0, ctcBeforePhaseout - ctcPhaseoutReduction);
+
+      // EITC: simplified estimate based on filing status and children
+      let eitcCredit = 0;
+      if (qualifyingChildren.length === 0 && agi < 17640) {
+        eitcCredit = Math.min(632, agi * 0.0765);
+      } else if (qualifyingChildren.length === 1 && agi < (isMfj ? 53120 : 46560)) {
+        eitcCredit = Math.min(4213, Math.max(0, 4213 - Math.max(0, agi - 21430) * 0.1598));
+      } else if (qualifyingChildren.length === 2 && agi < (isMfj ? 59478 : 52918)) {
+        eitcCredit = Math.min(6960, Math.max(0, 6960 - Math.max(0, agi - 21430) * 0.2106));
+      } else if (qualifyingChildren.length >= 3 && agi < (isMfj ? 63398 : 56838)) {
+        eitcCredit = Math.min(7830, Math.max(0, 7830 - Math.max(0, agi - 21430) * 0.2106));
+      }
+
+      // Child & Dependent Care Credit: simplified — 20% of up to $3,000 (1 child) or $6,000 (2+)
+      const careExpenseLimit = qualifyingChildren.length >= 2 ? 6000 : qualifyingChildren.length === 1 ? 3000 : 0;
+      const childCareCredit = agi < 43000 ? careExpenseLimit * 0.35 : careExpenseLimit * 0.20;
+
+      // American Opportunity Credit / Lifetime Learning (education): placeholder $0 — no education data yet
+      const educationCredit = 0;
+
+      // Saver's Credit: simplified 10% of up to $2,000 for lower-income filers
+      const saverPhaseout = isMfj ? 76500 : 38250;
+      const saverCredit = agi < saverPhaseout ? Math.min(200, agi * 0.001) : 0;
+
+      res.json({
+        childTaxCredit: Math.round(childTaxCredit),
+        eitcCredit: Math.round(eitcCredit),
+        childCareCredit: Math.round(childCareCredit),
+        educationCredit: Math.round(educationCredit),
+        saverCredit: Math.round(saverCredit),
+        totalCredits: Math.round(childTaxCredit + eitcCredit + childCareCredit + educationCredit + saverCredit),
+        inputs: {
+          agi,
+          filingStatus,
+          qualifyingChildrenCount: qualifyingChildren.length,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── AI Insights PATCH (accept/dismiss) ────────────────────────────────────
+
+  app.patch("/api/ai/insights/:id", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const { status } = req.body;
+      if (!status || !["accepted", "dismissed"].includes(status)) {
+        return res.status(400).json({ message: "status must be 'accepted' or 'dismissed'" });
+      }
+
+      // Verify the insight belongs to the requesting user's tax return
+      const taxReturns = await storage.getTaxReturnsByUserId(req.userId!);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+      const taxReturn = taxReturns[0];
+      const insights = await storage.getAiInsightsByTaxReturnId(taxReturn.id);
+      const insight = insights.find((i) => i.id === req.params.id);
+      if (!insight) {
+        return res.status(404).json({ message: "Insight not found" });
+      }
+
+      const updated = await storage.updateAiInsight(req.params.id, { status });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── Tax Planning Summary Route ────────────────────────────────────────────
+
+  app.get("/api/tax-planning/summary", authenticateToken, async (req: AuthRequest, res) => {
+    try {
+      const activeYear = await taxConfigService.getActiveTaxYear();
+      if (!activeYear) {
+        return res.status(404).json({ message: "No active tax year found" });
+      }
+      const taxReturns = await storage.getTaxReturnsByUserIdAndYear(req.userId!, activeYear.year);
+      if (taxReturns.length === 0) {
+        return res.status(404).json({ message: "No tax return found" });
+      }
+      const taxReturn = taxReturns[0];
+      const form1040 = await storage.getForm1040ByTaxReturnId(taxReturn.id);
+
+      const currentTax = parseFloat(form1040?.totalTax || taxReturn.totalTax || "0");
+      const withheld = parseFloat(form1040?.federalWithheld || taxReturn.withheld || "0");
+
+      // Safe harbor: use current tax as proxy for prior-year tax
+      const safeHarborAmount = currentTax;
+      const quarterlyEstimate = safeHarborAmount / 4;
+
+      // W-4 suggestion: additional withholding needed per paycheck (assume 26 pay periods)
+      const annualShortfall = Math.max(0, safeHarborAmount - withheld);
+      const additionalWithholdingPerPaycheck = annualShortfall / 26;
+
+      // Retirement contribution headroom (2024 limits: 401k $23,000, IRA $7,000)
+      const estimated401kContributions = 0; // Would come from W-2 Box 12 in a full implementation
+      const headroom401k = Math.max(0, 23000 - estimated401kContributions);
+      const headroomIra = 7000; // Simplified — no existing IRA contribution data
+
+      // Year-end position
+      const estimatedRefundOwed = withheld - currentTax;
+
+      res.json({
+        quarterlyEstimatedPayments: {
+          q1: Math.round(quarterlyEstimate),
+          q2: Math.round(quarterlyEstimate),
+          q3: Math.round(quarterlyEstimate),
+          q4: Math.round(quarterlyEstimate),
+          annualTotal: Math.round(safeHarborAmount),
+        },
+        w4Suggestion: {
+          additionalWithholdingPerPaycheck: Math.round(additionalWithholdingPerPaycheck),
+          annualShortfall: Math.round(annualShortfall),
+          note:
+            annualShortfall > 0
+              ? `Consider adding $${Math.round(additionalWithholdingPerPaycheck)} to each paycheck's withholding`
+              : "Current withholding appears sufficient",
+        },
+        retirementHeadroom: {
+          traditional401k: Math.round(headroom401k),
+          ira: Math.round(headroomIra),
+          totalOpportunity: Math.round(headroom401k + headroomIra),
+        },
+        yearEndPosition: {
+          estimatedTax: Math.round(currentTax),
+          estimatedWithholding: Math.round(withheld),
+          estimatedRefundOwed: Math.round(estimatedRefundOwed),
+          isRefund: estimatedRefundOwed >= 0,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
 
   const httpServer = createServer(app);
   return httpServer;

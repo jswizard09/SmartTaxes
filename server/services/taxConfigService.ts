@@ -1,8 +1,8 @@
 import { eq, and, desc } from "drizzle-orm";
 import { storage } from "../storage";
-import type { 
-  TaxYear, 
-  FederalTaxBracket, 
+import type {
+  TaxYear,
+  FederalTaxBracket,
   FederalStandardDeduction,
   StateTaxBracket,
   StateStandardDeduction,
@@ -18,6 +18,7 @@ import type {
   InsertFormFieldDefinition,
   InsertAppConfiguration
 } from "@shared/schema";
+import { creditsService, type CreditCalculationParams } from "./creditsService";
 
 export interface TaxCalculationData {
   federalBrackets: FederalTaxBracket[];
@@ -461,6 +462,231 @@ export class TaxConfigurationService {
       throw error;
     }
   }
+
+  // -------------------------------------------------------------------------
+  // Comprehensive tax calculation – combines federal income tax, credits,
+  // deductions, SE tax, and AMT into a single result object.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Calculate a comprehensive federal tax liability for a given tax year.
+   *
+   * @param params - Input parameters describing the filer's financial situation.
+   * @returns ComprehensiveTaxResult with every major line item broken out.
+   */
+  async calculateComprehensiveTax(params: {
+    grossIncome: number;
+    filingStatus: string;
+    year?: number;
+    // Deductions
+    itemizedDeductions?: number;
+    // Credits inputs
+    qualifyingChildren?: number;
+    childrenUnder17?: number;
+    numEITCChildren?: number;
+    wages?: number;
+    careExpenses?: number;
+    numQualifyingPersons?: number;
+    qualifiedEducationExpenses?: number;
+    educationCreditType?: 'aotc' | 'llc';
+    retirementContributions?: number;
+    amtPreferences?: number;
+    netSEIncome?: number;
+    // Above-the-line adjustments (student loan interest, IRA, etc.)
+    aboveTheLineDeductions?: number;
+  }): Promise<ComprehensiveTaxResult> {
+    const {
+      grossIncome,
+      filingStatus,
+      year = new Date().getFullYear(),
+      itemizedDeductions = 0,
+      qualifyingChildren = 0,
+      childrenUnder17 = 0,
+      numEITCChildren = 0,
+      wages = grossIncome,
+      careExpenses = 0,
+      numQualifyingPersons = 0,
+      qualifiedEducationExpenses = 0,
+      educationCreditType = 'aotc',
+      retirementContributions = 0,
+      amtPreferences = 0,
+      netSEIncome = 0,
+      aboveTheLineDeductions = 0,
+    } = params;
+
+    // 1. Self-employment tax (computed before AGI so deductible half reduces AGI)
+    const { seTax: selfEmploymentTax, deductibleHalf: seDeduction } =
+      creditsService.calculateSelfEmploymentTax(netSEIncome);
+
+    // 2. Adjusted Gross Income
+    const adjustedGrossIncome = Math.max(
+      0,
+      grossIncome - aboveTheLineDeductions - seDeduction
+    );
+
+    // 3. Standard deduction for the filing status and tax year
+    const { federalStandardDeduction: stdDeductionRecord } =
+      await this.getTaxCalculationData(year, filingStatus);
+    const standardDeduction = stdDeductionRecord
+      ? Number(stdDeductionRecord.amount)
+      : this.fallbackStandardDeduction(filingStatus);
+
+    // 4. Choose the larger of standard vs. itemized deduction
+    const useItemized = itemizedDeductions > standardDeduction;
+    const deduction = useItemized ? itemizedDeductions : standardDeduction;
+
+    // 5. Taxable income
+    const taxableIncome = Math.max(0, adjustedGrossIncome - deduction);
+
+    // 6. Federal income tax from brackets
+    const federalIncomeTax = await this.calculateFederalTax(taxableIncome, filingStatus, year);
+
+    // 7. All credits
+    const creditParams: CreditCalculationParams = {
+      agi: adjustedGrossIncome,
+      filingStatus,
+      qualifyingChildren,
+      childrenUnder17,
+      numEITCChildren,
+      wages,
+      careExpenses,
+      numQualifyingPersons,
+      qualifiedEducationExpenses,
+      educationCreditType,
+      retirementContributions,
+      amtPreferences,
+      netSEIncome,
+      taxableIncome,
+      itemizedDeductions,
+    };
+    const credits = creditsService.calculateAllCredits(creditParams);
+
+    // 8. AMT
+    const altMinimumTax = credits.altMinimumTax;
+
+    // 9. Total tax (income tax + AMT + SE tax − credits)
+    const rawTax = federalIncomeTax + Math.max(0, altMinimumTax - federalIncomeTax) + selfEmploymentTax;
+    const totalCredits =
+      credits.childTaxCredit +
+      credits.additionalChildTaxCredit +
+      credits.eitcCredit +
+      credits.childCareCredit +
+      credits.educationCredit +
+      credits.saverCredit;
+    const totalTax = Math.max(0, rawTax - totalCredits);
+
+    // 10. Rates
+    const effectiveRate = grossIncome > 0 ? totalTax / grossIncome : 0;
+    const marginalRate = this.getMarginalFederalRate(taxableIncome, filingStatus);
+
+    return {
+      grossIncome,
+      adjustedGrossIncome,
+      standardDeduction,
+      itemizedDeduction: itemizedDeductions,
+      useItemized,
+      taxableIncome,
+      federalIncomeTax: Math.round(federalIncomeTax * 100) / 100,
+      selfEmploymentTax: Math.round(selfEmploymentTax * 100) / 100,
+      altMinimumTax: Math.round(altMinimumTax * 100) / 100,
+      childTaxCredit: credits.childTaxCredit,
+      eitcCredit: credits.eitcCredit,
+      childCareCredit: credits.childCareCredit,
+      educationCredit: credits.educationCredit,
+      saverCredit: credits.saverCredit,
+      totalCredits: Math.round(totalCredits * 100) / 100,
+      totalTax: Math.round(totalTax * 100) / 100,
+      effectiveRate: Math.round(effectiveRate * 10000) / 10000,
+      marginalRate,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Private helpers for calculateComprehensiveTax
+  // -------------------------------------------------------------------------
+
+  private fallbackStandardDeduction(filingStatus: string): number {
+    const deductions: Record<string, number> = {
+      single: 14600,
+      married_joint: 29200,
+      married_separate: 14600,
+      head_of_household: 21900,
+    };
+    return deductions[filingStatus] ?? 14600;
+  }
+
+  private getMarginalFederalRate(taxableIncome: number, filingStatus: string): number {
+    // 2024 federal brackets (single shown; simplified lookup)
+    const brackets: Record<string, Array<{ min: number; max: number; rate: number }>> = {
+      single: [
+        { min: 0,      max: 11600,  rate: 0.10 },
+        { min: 11600,  max: 47150,  rate: 0.12 },
+        { min: 47150,  max: 100525, rate: 0.22 },
+        { min: 100525, max: 191950, rate: 0.24 },
+        { min: 191950, max: 243725, rate: 0.32 },
+        { min: 243725, max: 609350, rate: 0.35 },
+        { min: 609350, max: Infinity, rate: 0.37 },
+      ],
+      married_joint: [
+        { min: 0,      max: 23200,  rate: 0.10 },
+        { min: 23200,  max: 94300,  rate: 0.12 },
+        { min: 94300,  max: 201050, rate: 0.22 },
+        { min: 201050, max: 383900, rate: 0.24 },
+        { min: 383900, max: 487450, rate: 0.32 },
+        { min: 487450, max: 731200, rate: 0.35 },
+        { min: 731200, max: Infinity, rate: 0.37 },
+      ],
+      married_separate: [
+        { min: 0,      max: 11600,  rate: 0.10 },
+        { min: 11600,  max: 47150,  rate: 0.12 },
+        { min: 47150,  max: 100525, rate: 0.22 },
+        { min: 100525, max: 191950, rate: 0.24 },
+        { min: 191950, max: 243725, rate: 0.32 },
+        { min: 243725, max: 365600, rate: 0.35 },
+        { min: 365600, max: Infinity, rate: 0.37 },
+      ],
+      head_of_household: [
+        { min: 0,      max: 16550,  rate: 0.10 },
+        { min: 16550,  max: 63100,  rate: 0.12 },
+        { min: 63100,  max: 100500, rate: 0.22 },
+        { min: 100500, max: 191950, rate: 0.24 },
+        { min: 191950, max: 243700, rate: 0.32 },
+        { min: 243700, max: 609350, rate: 0.35 },
+        { min: 609350, max: Infinity, rate: 0.37 },
+      ],
+    };
+
+    const statusBrackets = brackets[filingStatus] ?? brackets.single;
+    for (const b of statusBrackets) {
+      if (taxableIncome >= b.min && taxableIncome < b.max) return b.rate;
+    }
+    return 0.37;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Result interface (exported so consumers can type-check)
+// ---------------------------------------------------------------------------
+
+export interface ComprehensiveTaxResult {
+  grossIncome: number;
+  adjustedGrossIncome: number;
+  standardDeduction: number;
+  itemizedDeduction: number;
+  useItemized: boolean;
+  taxableIncome: number;
+  federalIncomeTax: number;
+  selfEmploymentTax: number;
+  altMinimumTax: number;
+  childTaxCredit: number;
+  eitcCredit: number;
+  childCareCredit: number;
+  educationCredit: number;
+  saverCredit: number;
+  totalCredits: number;
+  totalTax: number;
+  effectiveRate: number;
+  marginalRate: number;
 }
 
 export const taxConfigService = new TaxConfigurationService();

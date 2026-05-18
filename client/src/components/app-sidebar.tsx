@@ -1,4 +1,4 @@
-import { Home, Upload, FileText, Calculator, ClipboardCheck, TrendingUp, Lightbulb, Send, User } from "lucide-react";
+import { Home, Upload, FileText, Calculator, ClipboardCheck, TrendingUp, Lightbulb, Send, User, Receipt, Briefcase } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -54,6 +54,24 @@ const menuItems = [
     url: "/schedule-d",
     icon: TrendingUp,
     testId: "link-schedule-d",
+  },
+  {
+    title: "Schedule A",
+    url: "/schedule-a",
+    icon: Receipt,
+    testId: "link-schedule-a",
+  },
+  {
+    title: "Schedule C",
+    url: "/schedule-c",
+    icon: Briefcase,
+    testId: "link-schedule-c",
+  },
+  {
+    title: "Tax Planning",
+    url: "/tax-planning",
+    icon: Calculator,
+    testId: "link-tax-planning",
   },
   {
     title: "AI Insights",
